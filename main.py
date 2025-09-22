@@ -19,13 +19,9 @@ smartsheet = smartsheet.Smartsheet(SMARTSHEET_ACCESS_TOKEN)
 mega_intake_sheet=os.getenv("MEGA_SHEET_ID")
 column_titles=os.getenv("COLUMN_TITLES").split(",")
 
-def is_workspaces_substring(string_a: str, string_b: str) -> bool:
+def is_workspaces_substring(string_a: str, string_b: str)-> bool:
     """
     Checks if the 'workspaces/*' substring from string_a is present in string_b.
-
-    This function extracts the substring from string_a that starts with
-    "workspaces/" and continues up to a potential wildcard character (*).
-    It then checks if this extracted substring is found within string_b.
 
     Args:
         string_a: The string containing the pattern (e.g., 'path/to/workspaces/dev*').
@@ -82,7 +78,6 @@ def get_pacific_today_date()->str:
         # Define the Pacific timezone using ZoneInfo
         pacific_tz = ZoneInfo('America/Los_Angeles')
         # Get the current time directly in the Pacific timezone
-        # datetime.now() with a tzinfo argument returns a timezone-aware datetime
         pacific_now = datetime.now(pacific_tz)
         # Format the date as YYYY-MM-DD
         formatted_date = pacific_now.strftime('%Y-%m-%d')
@@ -96,6 +91,13 @@ def get_pacific_today_date()->str:
         return None
 
 def return_workspace_id(permalink: str) -> int:
+    """
+    Returns the workspace ID for a given permalink.
+    Args:
+        permalink (str): The permalink of the workspace to search for.
+    Returns:
+        int or None: The ID of the matching workspace, or None if not found.
+    """
     logging.info(f"Searching for workspace with permalink: {permalink}")
     workspaces = smartsheet.Workspaces.list_workspaces(include_all=True).data
     for workspace in workspaces:
@@ -112,6 +114,11 @@ def return_workspace_id(permalink: str) -> int:
     return None
     
 def delete_workspace(workspace_id: int):
+    """
+    Deletes a workspace by its ID.
+    Args:
+        workspace_id (int): The ID of the workspace to delete.
+    """
     try:
         response = smartsheet.Workspaces.delete_workspace(workspace_id)
         if response.message == "SUCCESS":
@@ -123,6 +130,13 @@ def delete_workspace(workspace_id: int):
     
 
 def get_column_ids(sheet_id: int) -> dict:
+    """
+    Retrieves the IDs of specific columns in a Smartsheet by their titles.
+    Args:
+        sheet_id (int): The ID of the Smartsheet to query.
+    Returns:
+        dict: A dictionary mapping column titles to their corresponding IDs.
+    """
     columns = smartsheet.Sheets.get_columns(sheet_id,include_all=True).data
     column_ids = {}
     for column in columns:
@@ -158,56 +172,78 @@ def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, t
     return delete_workspace      
 
 def update_cell(row_id: int, column_id: int, new_value: str):
+    """ 
+    Updates a specific cell in a Smartsheet row.
+    Args:
+        row_id (int): The ID of the row containing the cell to update.
+        column_id (int): The ID of the column containing the cell to update.
+        new_value (str): The new value to set in the cell.
+    """
+    logging.info(f"Updating cell in row {row_id}, column {column_id} to '{new_value}'")
     # Build new cell value
     new_cell = smartsheet.models.Cell()
     new_cell.column_id = column_id
     new_cell.value = new_value
     new_cell.strict = False
-
     # Build the row to update
     new_row = smartsheet.models.Row()
     new_row.id = row_id
     new_row.cells.append(new_cell)
-
     try:
         response = smartsheet.Sheets.update_rows(mega_intake_sheet, [new_row])
         logging.info(f"Cell updated successfully: {response}")
     except Exception as e:
         logging.error(f"Error updating cell: {e}")
 
-
-def process_rows(sheet_id: int, column_ids: dict):
+def process_row(column_ids: dict, row: dict):
+    """
+    Processes a single row to determine if a workspace should be deleted.
+    Args:
+        column_ids (dict): A dictionary mapping column titles to their IDs.
+        row (dict): The row data to process.
+    """
     extracted_row_data = {}  # This dictionary will store data for the CURRENT row being processed
-    rows = smartsheet.Sheets.get_sheet(sheet_id).rows
-    number_of_rows = len(rows)
-    logging.info(f"Processing {number_of_rows} rows...")
-    for row in rows:
-        logging.info("--- New Row ---")
-        logging.info(f"Processing row: {rows.index(row)+1} of {number_of_rows}")
-        logging.info(f"Row data: {row.to_dict()}")
-        extracted_row_data["row_id"]= row.id
-        for cell in row.cells:
-            if (cell.column_id in column_ids.values()) and cell.value != None:
-                key_from_value = get_key_from_value(column_ids, cell.column_id)
-                if key_from_value:
-                    extracted_row_data[key_from_value] = cell.to_dict()
+    extracted_row_data["row_id"]= row.id
+    for cell in row.cells:
+        if (cell.column_id in column_ids.values()) and cell.value != None:
+            key_from_value = get_key_from_value(column_ids, cell.column_id)
+            if key_from_value:
+                extracted_row_data[key_from_value] = cell.to_dict()
 
-        em_notification_date = extracted_row_data["em_notification"]["value"]
-        deletion_date = extracted_row_data["delete_date"]["value"]
-        todays_date = get_pacific_today_date()
-        if should_workspace_be_deleted(em_notification_date, deletion_date, todays_date):
-            logging.info("Conditions met for deletion. Proceeding to delete workspace.")
-            workspace_to_delete = return_workspace_id(extracted_row_data['workspaces']['hyperlink']['url'])
-            if workspace_to_delete is None:
-                logging.warning("Workspace id not found, skipping deletion.")
-            delete_workspace(workspace_to_delete)
-            update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
+    em_notification_date = extracted_row_data["em_notification"]["value"]
+    deletion_date = extracted_row_data["delete_date"]["value"]
+    todays_date = get_pacific_today_date()
+    if should_workspace_be_deleted(em_notification_date, deletion_date, todays_date):
+        logging.info("Conditions met for deletion. Proceeding to delete workspace.")
+        workspace_to_delete = return_workspace_id(extracted_row_data['workspaces']['hyperlink']['url'])
+        if workspace_to_delete is None:
+            logging.warning("Workspace id not found, skipping deletion.")
+            return
+        delete_workspace(workspace_to_delete)
+        update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
+
+def main():
+    logging.info("Starting Smartsheet Workspace Deletion Script.")
+    logging.info(f"Using Mega Intake Sheet ID: {mega_intake_sheet}")
+    logging.info(f"Using Column Titles: {column_titles}")
+    logging.info("Fetching column IDs...")
+    column_ids = get_column_ids(mega_intake_sheet)
+    logging.info("Fetching rows...")
+    rows = smartsheet.Sheets.get_sheet(mega_intake_sheet).rows
+
+    for i, row in enumerate(rows):
+        logging.info(f"Processing rows {i+1}/{len(rows)}:\n{row}")
+        process_row(column_ids, row)
     
+    logging.info("Smartsheet Workspace Deletion Script finished.")
 
 if __name__ == "__main__":
-    column_ids = get_column_ids(mega_intake_sheet)
-
-    process_rows(mega_intake_sheet, column_ids)
+    try:
+        main()
+    except KeyboardInterrupt:
+        logging.info("Script interrupted by user.")
+    except Exception as e:
+        logging.critical(f"Script terminated due to unhandled exception: {e}")
 
 
 

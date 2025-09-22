@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 
 
-# Environment configuration
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
@@ -36,10 +35,7 @@ def is_workspaces_substring(string_a: str, string_b: str) -> bool:
         True if the 'workspaces' pattern from string_a is a substring of string_b,
         False otherwise.
     """
-    # Define the regex pattern to capture the 'workspaces/' portion of string_a.
-    # The pattern looks for 'workspaces/' followed by any characters, up to
-    # a potential asterisk (*).
-    # The parentheses create a capturing group for the part we want to extract.
+    # Define the regex pattern to capture 'workspaces/' followed by any characters
     pattern = r'(workspaces/.*)\*?'
     
     # Search for the pattern in string_a
@@ -55,18 +51,6 @@ def is_workspaces_substring(string_a: str, string_b: str) -> bool:
     
     # If no 'workspaces/' pattern is found in string_a, return False.
     return False
-
-def return_workspace_id(permalink: str) -> int:
-    print(f"Searching for workspace with permalink: '{permalink}'")
-    workspaces = smartsheet.Workspaces.list_workspaces(include_all=True).data
-    for workspace in workspaces:
-        print(f"Checking workspace: {workspace.name} with permalink {workspace.permalink}")
-        if is_workspaces_substring(permalink, workspace.permalink):
-            print(f"---------Found workspace with permalink {permalink}:----------")
-            print(f"Workspace Information:\nID: {workspace.id}\nName: {workspace.name}\nPermalink: {workspace.permalink}")
-            return workspace.id
-    print(f"No workspace found with permalink: {permalink}")
-    return None
 
 def get_key_from_value(dictionary:dict, value_to_find)-> str:
     """
@@ -84,6 +68,7 @@ def get_key_from_value(dictionary:dict, value_to_find)-> str:
         if value == value_to_find:
             return key
     return None
+
 
 def get_pacific_today_date()->str:
     """
@@ -110,8 +95,35 @@ def get_pacific_today_date()->str:
         print(f"An unexpected error occurred: {e}")
         return None
 
-def get_column_ids() -> dict:
-    columns = smartsheet.Sheets.get_columns(mega_intake_sheet,include_all=True).data
+def return_workspace_id(permalink: str) -> int:
+    logging.info(f"Searching for workspace with permalink: {permalink}")
+    workspaces = smartsheet.Workspaces.list_workspaces(include_all=True).data
+    for workspace in workspaces:
+        workspace_obj = {
+            "id": workspace.id,
+            "name": workspace.name,
+            "permalink": workspace.permalink
+        }
+        logging.info(f"Checking workspace: {workspace_obj}")
+        if is_workspaces_substring(permalink, workspace.permalink):
+            logging.info(f"Found matching workspace: Information:\n{workspace_obj}")
+            return workspace.id
+    logging.info(f"No workspace found with permalink: {permalink}")
+    return None
+    
+def delete_workspace(workspace_id: int):
+    try:
+        response = smartsheet.Workspaces.delete_workspace(workspace_id)
+        if response.message == "SUCCESS":
+            logging.info(f"Workspace with ID {workspace_id} deleted successfully.")
+        else:
+            logging.error(f"Failed to delete workspace with ID {workspace_id}. Response: {response}")
+    except Exception as e:
+        logging.error(f"An error occurred while trying to delete workspace with ID {workspace_id}: {e}")
+    
+
+def get_column_ids(sheet_id: int) -> dict:
+    columns = smartsheet.Sheets.get_columns(sheet_id,include_all=True).data
     column_ids = {}
     for column in columns:
         if column.title in column_titles:
@@ -121,52 +133,81 @@ def get_column_ids() -> dict:
                 column_ids["em_notification"] = column.id
             elif column.title == column_titles[3]:  # Workspaces
                 column_ids["workspaces"] = column.id
+            elif column.title == column_titles[4]:  # status
+                column_ids["status"] = column.id
     return column_ids
 
-def return_row_data(sheet_id: int):
-    column_ids=get_column_ids()
-    # print(f"Column IDs: {column_ids}")
-    rows = smartsheet.Sheets.get_sheet(sheet_id).rows
+def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, todays_date: str) -> bool:
+    """
+    Determines if a workspace should be deleted based on the EM notification date,
+    deletion date, and today's date.
+
+    Args:
+        em_notification_date (str): The EM notification date in 'YYYY-MM-DD' format.    
+        delete_date (str): The deletion date in 'YYYY-MM-DD' format.
+        today_date (str): Today's date in 'YYYY-MM-DD' format.
+    Returns:
+        bool: True if the workspace should be deleted, False otherwise.
+    """
+    is_today_em_notification = em_notification_date == todays_date
+    is_today_deletion_date_date = deletion_date == todays_date
+    delete_workspace = is_today_deletion_date_date and not is_today_em_notification
+    logging.info(f"EM Notification Date: {em_notification_date}, Deletion Date: {deletion_date}, Today's Date: {todays_date}")
+    logging.info(f"Should workspace be deleted? {delete_workspace}")
+    # Workspace should be deleted if today is the deletion date and NOT the EM notification date
+    return delete_workspace      
+
+def update_cell(row_id: int, column_id: int, new_value: str):
+    # Build new cell value
+    new_cell = smartsheet.models.Cell()
+    new_cell.column_id = column_id
+    new_cell.value = new_value
+    new_cell.strict = False
+
+    # Build the row to update
+    new_row = smartsheet.models.Row()
+    new_row.id = row_id
+    new_row.cells.append(new_cell)
+
+    try:
+        response = smartsheet.Sheets.update_rows(mega_intake_sheet, [new_row])
+        logging.info(f"Cell updated successfully: {response}")
+    except Exception as e:
+        logging.error(f"Error updating cell: {e}")
+
+
+def process_rows(sheet_id: int, column_ids: dict):
     extracted_row_data = {}  # This dictionary will store data for the CURRENT row being processed
-    print("--- Process Rows ---\n")
+    rows = smartsheet.Sheets.get_sheet(sheet_id).rows
+    number_of_rows = len(rows)
+    logging.info(f"Processing {number_of_rows} rows...")
     for row in rows:
-        # print("\n--- Row Data ---\n")
-        # print(row)
+        logging.info("--- New Row ---")
+        logging.info(f"Processing row: {rows.index(row)+1} of {number_of_rows}")
+        logging.info(f"Row data: {row.to_dict()}")
+        extracted_row_data["row_id"]= row.id
         for cell in row.cells:
             if (cell.column_id in column_ids.values()) and cell.value != None:
                 key_from_value = get_key_from_value(column_ids, cell.column_id)
                 if key_from_value:
                     extracted_row_data[key_from_value] = cell.to_dict()
-        print("--- Extracted Row Data ---\n")
-        print(extracted_row_data,"\n")
-        # After processing all cells in the row, we can now check the conditions
-        print("--- Checking conditions for today's date... ---")
-        try:
-            is_today_em_notification = extracted_row_data["em_notification"]["value"] == get_pacific_today_date()
-            #print(f"Is today EM Notification Date? {is_today_em_notification}", f"{extracted_row_data["em_notification"]["value"]}", f"{get_pacific_today_date()}")
-            is_today_delete_date = extracted_row_data["delete_date"]["value"] == get_pacific_today_date()
-            #print(f"Is today Delete Date? {is_today_delete_date}")
 
-            if not is_today_em_notification:  # If today is NOT the EM notification date
-                #print(f"EM Notification of Deletion Date: {extracted_row_data['em_notification']['value']}")
-                if is_today_delete_date:  # AND today IS the delete date
-                    print(f"Deletion Date: {extracted_row_data['delete_date']["value"]}")
-                    print(f"PermaLink: {extracted_row_data["workspaces"]['hyperlink']['url']}")
-                    print("Delete workspace in progress")
-                    workspace_to_delete = return_workspace_id(extracted_row_data["workspaces"]['hyperlink']['url'])
-                    if workspace_to_delete is None:
-                        print("Workspace id not found, skipping deletion.")
-                        continue
-                    response = smartsheet.Workspaces.delete_workspace(workspace_to_delete)
-                    if response.message == "SUCCESS":
-                        print(f"Workspace with ID {workspace_to_delete} deleted successfully.")
-        except KeyError as e:
-            logging.error(f"KeyError: {e} - One of the required keys is missing in the row data.")
-        print("--- End of Row ---\n")
-            
+        em_notification_date = extracted_row_data["em_notification"]["value"]
+        deletion_date = extracted_row_data["delete_date"]["value"]
+        todays_date = get_pacific_today_date()
+        if should_workspace_be_deleted(em_notification_date, deletion_date, todays_date):
+            logging.info("Conditions met for deletion. Proceeding to delete workspace.")
+            workspace_to_delete = return_workspace_id(extracted_row_data['workspaces']['hyperlink']['url'])
+            if workspace_to_delete is None:
+                logging.warning("Workspace id not found, skipping deletion.")
+            delete_workspace(workspace_to_delete)
+            update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
     
 
+if __name__ == "__main__":
+    column_ids = get_column_ids(mega_intake_sheet)
+
+    process_rows(mega_intake_sheet, column_ids)
 
 
-return_row_data(mega_intake_sheet)
 

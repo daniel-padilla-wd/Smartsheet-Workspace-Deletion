@@ -83,16 +83,46 @@ def get_pacific_today_date()->str:
         formatted_date = pacific_now.strftime('%Y-%m-%d')
         return formatted_date
     except ZoneInfoNotFoundError:
-        print("Error: 'America/Los_Angeles' timezone data not found.")
-        print("Please ensure your system's timezone data is up-to-date or install the 'tzdata' package (`pip install tzdata`).")
+        logging.error("'America/Los_Angeles' timezone data not found.")
+        logging.warn("Please ensure your system's timezone data is up-to-date or install the 'tzdata' package (`pip install tzdata`).")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logging.error(f"An unexpected error occurred: {e}")
         return None
+    
+def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
+    """
+    Compares a given date string (date_string) to today's date (todays_date).
+
+    Args:
+        date_string: The date string to compare, in "YYYY-MM-DD" format.
+
+    Returns:
+        True if Date A is on or before today's date, otherwise False.
+    """
+
+    try:
+        # Parse the input date string into a datetime.date object
+        # The format code '%m-%d-%Y' matches "MM-DD-YYYY"
+        date_a = datetime.strptime(date_string, '%Y-%m-%d').date()
+        date_b = datetime.strptime(todays_date, '%Y-%m-%d').date()
+    except ValueError:
+        print(f"Error: Invalid date format for '{date_string}'. Expected YYYY-MM-DD.")
+        return False
+
+    # Compare Date A to today's date
+    # This comparison works because both are now datetime.date objects
+    if date_a <= date_b:
+        print(f"'{date_string}' is on or before today ({todays_date}). Action can proceed.")
+        return True
+    else:
+        print(f"'{date_string}' is in the future ({todays_date}). No action.")
+        return False
 
 def return_workspace_id(permalink: str) -> int:
     """
     Returns the workspace ID for a given permalink.
+
     Args:
         permalink (str): The permalink of the workspace to search for.
     Returns:
@@ -116,6 +146,7 @@ def return_workspace_id(permalink: str) -> int:
 def delete_workspace(workspace_id: int):
     """
     Deletes a workspace by its ID.
+
     Args:
         workspace_id (int): The ID of the workspace to delete.
     """
@@ -132,6 +163,7 @@ def delete_workspace(workspace_id: int):
 def get_column_ids(sheet_id: int) -> dict:
     """
     Retrieves the IDs of specific columns in a Smartsheet by their titles.
+
     Args:
         sheet_id (int): The ID of the Smartsheet to query.
     Returns:
@@ -164,16 +196,17 @@ def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, t
         bool: True if the workspace should be deleted, False otherwise.
     """
     is_today_em_notification = em_notification_date == todays_date
-    is_today_deletion_date_date = deletion_date == todays_date
-    delete_workspace = is_today_deletion_date_date and not is_today_em_notification
+    is_today_deletion_date = is_date_past_or_today(deletion_date, todays_date)
+    proceed_with_deletion = is_today_deletion_date and not is_today_em_notification
     logging.info(f"EM Notification Date: {em_notification_date}, Deletion Date: {deletion_date}, Today's Date: {todays_date}")
-    logging.info(f"Should workspace be deleted? {delete_workspace}")
+    logging.info(f"Should workspace be deleted? {proceed_with_deletion}")
     # Workspace should be deleted if today is the deletion date and NOT the EM notification date
-    return delete_workspace      
+    return proceed_with_deletion      
 
 def update_cell(row_id: int, column_id: int, new_value: str):
     """ 
     Updates a specific cell in a Smartsheet row.
+
     Args:
         row_id (int): The ID of the row containing the cell to update.
         column_id (int): The ID of the column containing the cell to update.
@@ -198,11 +231,12 @@ def update_cell(row_id: int, column_id: int, new_value: str):
 def process_row(column_ids: dict, row: dict):
     """
     Processes a single row to determine if a workspace should be deleted.
+    
     Args:
         column_ids (dict): A dictionary mapping column titles to their IDs.
         row (dict): The row data to process.
     """
-    extracted_row_data = {}  # This dictionary will store data for the CURRENT row being processed
+    extracted_row_data = {} 
     extracted_row_data["row_id"]= row.id
     for cell in row.cells:
         if (cell.column_id in column_ids.values()) and cell.value != None:
@@ -219,8 +253,10 @@ def process_row(column_ids: dict, row: dict):
         if workspace_to_delete is None:
             logging.warning("Workspace id not found, skipping deletion.")
             return
-        delete_workspace(workspace_to_delete)
-        update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
+        logging.info(f"Workspace ID to delete: {workspace_to_delete}")
+        logging.warning("Deletion step is currently commented out for safety.")
+        #delete_workspace(workspace_to_delete)
+        #update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
 
 def main():
     logging.info("Starting Smartsheet Workspace Deletion Script.")

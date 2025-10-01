@@ -47,9 +47,9 @@ The script performs the following steps:
     ```
     This assumes you have a `requirements.txt` file. If not, you can create one with the following contents:
     ```
+    requests
     smartsheet-python-sdk
     python-dotenv
-    tzdata
     ```
 
 #### Configuration

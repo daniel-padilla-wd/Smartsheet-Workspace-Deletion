@@ -24,11 +24,11 @@ def is_workspaces_substring(string_a: str, string_b: str)-> bool:
     Checks if the 'workspaces/*' substring from string_a is present in string_b.
 
     Args:
-        string_a: The string containing the pattern (e.g., 'path/to/workspaces/dev*').
-        string_b: The string to search within (e.g., 'path/to/workspaces/dev-project').
+        string_a (str): The string containing the pattern (e.g., 'path/to/workspaces/dev*').
+        string_b (str): The string to search within (e.g., 'path/to/workspaces/dev-project').
 
     Returns:
-        True if the 'workspaces' pattern from string_a is a substring of string_b,
+        bool: True if the 'workspaces' pattern from string_a is a substring of string_b,
         False otherwise.
     """
     # Define the regex pattern to capture 'workspaces/' followed by any characters
@@ -95,10 +95,10 @@ def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
     Compares a given date string (date_string) to today's date (todays_date).
 
     Args:
-        date_string: The date string to compare, in "YYYY-MM-DD" format.
+        date_string (str): The date string to compare, in "YYYY-MM-DD" format.
 
     Returns:
-        True if Date A is on or before today's date, otherwise False.
+        bool: True if Date A is on or before today's date, otherwise False.
     """
 
     try:
@@ -126,7 +126,7 @@ def return_workspace_id(permalink: str) -> int:
     Args:
         permalink (str): The permalink of the workspace to search for.
     Returns:
-        int or None: The ID of the matching workspace, or None if not found.
+        int: The ID of the matching workspace, or None if not found.
     """
     logging.info(f"Searching for workspace with permalink: {permalink}")
     workspaces = smartsheet.Workspaces.list_workspaces(include_all=True).data
@@ -280,6 +280,3 @@ if __name__ == "__main__":
         logging.info("Script interrupted by user.")
     except Exception as e:
         logging.critical(f"Script terminated due to unhandled exception: {e}")
-
-
-

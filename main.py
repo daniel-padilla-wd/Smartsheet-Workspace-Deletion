@@ -16,7 +16,7 @@ SMARTSHEET_ACCESS_TOKEN=os.getenv("SMARTSHEET_ACCESS_TOKEN")
 smartsheet = smartsheet.Smartsheet(SMARTSHEET_ACCESS_TOKEN)  
 
 # Aquire this through the sheet properties
-mega_intake_sheet=os.getenv("MEGA_SHEET_ID")
+mega_intake_sheet=os.getenv("PROD_TEST_SHEET")
 column_titles=os.getenv("COLUMN_TITLES").split(",")
 
 def is_workspaces_substring(string_a: str, string_b: str)-> bool:
@@ -248,15 +248,48 @@ def process_row(column_ids: dict, row: dict):
     deletion_date = extracted_row_data["delete_date"]["value"]
     todays_date = get_pacific_today_date()
     if should_workspace_be_deleted(em_notification_date, deletion_date, todays_date):
+        logging.info(f"Extracted row data:\n {extracted_row_data}")
         logging.info("Conditions met for deletion. Proceeding to delete workspace.")
         workspace_to_delete = return_workspace_id(extracted_row_data['workspaces']['hyperlink']['url'])
         if workspace_to_delete is None:
             logging.warning("Workspace id not found, skipping deletion.")
             return
         logging.info(f"Workspace ID to delete: {workspace_to_delete}")
-        logging.warning("Deletion step is currently commented out for safety.")
-        #delete_workspace(workspace_to_delete)
-        #update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
+        # logging.warning("Deletion step is currently commented out for safety.")
+        delete_workspace(workspace_to_delete)
+        update_cell(extracted_row_data["row_id"], column_ids["status"], "Deleted")
+
+
+def process_workspace_deletions(client, sheet_id):
+    """
+    Minimal wrapper to allow external callers (e.g. Lambda) to reuse the
+    existing helpers in this module while providing their own authenticated
+    Smartsheet client.
+
+    This function is intentionally non-invasive: it sets the module-level
+    `smartsheet` variable to the provided `client` and then runs the same
+    basic loop as `main()`, returning a small summary dict.
+    """
+    global smartsheet
+    smartsheet = client
+
+    summary = {"processed_rows": 0, "skipped": 0, "errors": []}
+    try:
+        column_ids = get_column_ids(sheet_id)
+        rows = smartsheet.Sheets.get_sheet(sheet_id).rows
+    except Exception as e:
+        return {"error": "failed_to_fetch_sheet_or_columns", "detail": str(e)}
+
+    for i, row in enumerate(rows):
+        try:
+            logging.info(f"Processing rows {i+1}/{len(rows)}:\n{row}")
+            process_row(column_ids, row)
+            summary["processed_rows"] += 1
+        except Exception as e:
+            summary["skipped"] += 1
+            summary["errors"].append({"row_index": i, "error": str(e)})
+
+    return summary
 
 def main():
     logging.info("Starting Smartsheet Workspace Deletion Script.")

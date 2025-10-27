@@ -1,4 +1,5 @@
 smartsheet-python-sdk
 requests
 certifi
-# optional: add aws-secretsmanager or boto3 later when moving to AWS Lambda
+python-dotenv
+boto3

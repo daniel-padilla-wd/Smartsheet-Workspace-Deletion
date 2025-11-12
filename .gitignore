@@ -3,3 +3,4 @@
 pyvenv.cfg
 *.sh
 ignore
+__pycache__

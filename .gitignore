@@ -4,3 +4,4 @@ pyvenv.cfg
 *.sh
 ignore
 __pycache__
+secrets

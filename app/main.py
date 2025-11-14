@@ -12,9 +12,6 @@ logging.basicConfig(level=logging.INFO)
 
 SMARTSHEET_ACCESS_TOKEN=os.getenv("SMARTSHEET_ACCESS_TOKEN")
 
-# Initialize Smartsheet connection
-# smartsheet = smartsheet.Smartsheet(SMARTSHEET_ACCESS_TOKEN)  
-
 # Aquire this through the sheet properties
 mega_intake_sheet=os.getenv("PROD_TEST_SHEET")
 column_titles=os.getenv("COLUMN_TITLES").split(",")
@@ -142,55 +139,6 @@ def return_workspace_id(client, permalink: str) -> int:
             return workspace.id
     logging.info(f"No workspace found with permalink: {permalink}")
     return None
-
-def admin_transfer_and_delete_workspace(client, workspace_id):
-    import requests
-    import certifi
-
-    url = "https://api.smartsheet.com/2.0/shares"
-
-    def get_current_user_id():
-        """Retrieves the user ID of the authenticated user (the service account)."""
-        try:
-            user = client.Users.get_current_user()
-            return user.id
-        except Exception as e:
-            logging.error(f"Failed to retrieve current user ID. Check READ_USERS scope. Error: {e.message}")
-            return None
-    service_account_user_id = get_current_user_id()
-
-    if not service_account_user_id:
-        print("Cannot proceed without the service account's User ID.")
-        return
-
-    # --- Step 1: Transfer Ownership to the Service Account ---
-    try:
-        # Create a User object for the ownership transfer request
-        # Share asset with users
-        logging.info(f"Attempting to transfer ownership of workspace ID {workspace_id} to User ID {service_account_user_id}...")
-         # 1. Define the raw JSON body for the POST /shares API call
-        payload = [{
-            # Use userId for the existing user (the service account)
-            "email": "smartsheet.cc.admin@workday.com", 
-            # Get the string 'OWNER' from the enum value
-            "accessLevel": "VIEWER"
-        }]
-        query={
-                "assetType": "workspace",
-                "assetId": workspace_id,
-                "sendEmail": False
-            }
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {SMARTSHEET_ACCESS_TOKEN}"
-        }
-        response = requests.post(url, json=payload, headers=headers, params=query, verify=certifi.where())
-
-        data = response.json() 
-        logging.info(f"Ownership transfer response: {data}")     
-
-    except Exception as e:
-        logging.error(f"An error occurred while trying to delete workspace with ID {workspace_id}: {e}")
     
 def delete_workspace(client, workspace_id: int):
     """
@@ -205,7 +153,6 @@ def delete_workspace(client, workspace_id: int):
             logging.info(f"Workspace with ID {workspace_id} deleted successfully.")
         else:
             logging.error(f"Failed to delete workspace with ID {workspace_id}. Response: {response}")
-            admin_transfer_and_delete_workspace(client, workspace_id)
     except Exception as e:
         logging.error(f"An error occurred while trying to delete workspace with ID {workspace_id}: {e}")
     
@@ -306,7 +253,7 @@ def process_row(client, column_ids: dict, row: dict):
             return
         logging.info(f"Workspace ID to delete: {workspace_to_delete}")
         # logging.warning("Deletion step is currently commented out for safety.")
-        client.Workspaces.delete_workspace(workspace_to_delete)
+        
         delete_workspace(client, workspace_to_delete)
         
         update_cell(client, extracted_row_data["row_id"], column_ids["status"], "Deleted")

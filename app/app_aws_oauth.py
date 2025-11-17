@@ -10,30 +10,56 @@ from botocore.exceptions import ClientError
 
 # --- Configuration ---
 # Required environment variables for Lambda
-CLIENT_ID = os.getenv('SM_CLIENT_ID')
-CLIENT_SECRET = os.getenv('SM_CLIENT_SECRET')
-SECRET_NAME = os.getenv('SMARTSHEET_TOKEN_SECRET_NAME', 'smartsheet/tokens')
+OAUTH_SECRET_NAME = os.getenv('SMARTSHEET_OAUTH_SECRET_NAME', 'smartsheet/oauth')
+TOKEN_SECRET_NAME = os.getenv('SMARTSHEET_TOKEN_SECRET_NAME', 'smartsheet/tokens')
 
 # Smartsheet OAuth endpoint for token refresh
 TOKEN_URL = "https://api.smartsheet.com/2.0/token"
 
 
-def get_secret():
-    """Retrieve token dict from AWS Secrets Manager. Returns dict or None."""
+def get_secret(secret_name):
+    """Retrieve dict from AWS Secrets Manager. Returns dict or None."""
     client = boto3.client('secretsmanager')
     try:
-        resp = client.get_secret_value(SecretId=SECRET_NAME)
+        resp = client.get_secret_value(SecretId=secret_name)
         if 'SecretString' in resp and resp['SecretString']:
-            return json.loads(resp['SecretString'])
+            parsed_data = json.loads(resp['SecretString'])
+            if isinstance(parsed_data, dict):
+                return parsed_data
+            else:
+                logging.error(f"Secret {secret_name} contains invalid data type: expected dict, got {type(parsed_data)}")
+                return None
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse secret {secret_name} as JSON: {e}")
     except ClientError as e:
         # Not found or access denied
-        logging.debug(f"Secrets Manager get_secret_value failed: {e}")
+        logging.debug(f"Secrets Manager get_secret_value failed for {secret_name}: {e}")
     except Exception as e:
-        logging.debug(f"Unexpected error reading secret: {e}")
+        logging.debug(f"Unexpected error reading secret {secret_name}: {e}")
     return None
 
 
-def save_secret(token_data: dict):
+def get_oauth_credentials():
+    """Retrieve OAuth client ID and secret from AWS Secrets Manager."""
+    oauth_data = get_secret(OAUTH_SECRET_NAME)
+    if oauth_data and isinstance(oauth_data, dict):
+        client_id = oauth_data.get('client_id') or oauth_data.get('CLIENT_ID')
+        client_secret = oauth_data.get('client_secret') or oauth_data.get('CLIENT_SECRET')
+        
+        if client_id and client_secret:
+            return client_id, client_secret
+        else:
+            missing = []
+            if not client_id: missing.append('client_id')
+            if not client_secret: missing.append('client_secret')
+            logging.error(f"OAuth secret missing required fields: {', '.join(missing)}")
+    else:
+        logging.error(f"Failed to retrieve OAuth credentials from secret: {OAUTH_SECRET_NAME}")
+    
+    return None, None
+
+
+def save_token_secret(token_data: dict):
     """Persist token dict to AWS Secrets Manager.
 
     token_data should be JSON-serializable containing at least accessToken/refreshToken.
@@ -41,12 +67,12 @@ def save_secret(token_data: dict):
     client = boto3.client('secretsmanager')
     try:
         # Try to update (put a new secret value). If secret doesn't exist, create it.
-        client.put_secret_value(SecretId=SECRET_NAME, SecretString=json.dumps(token_data))
+        client.put_secret_value(SecretId=TOKEN_SECRET_NAME, SecretString=json.dumps(token_data))
     except ClientError as e:
         # If the secret doesn't exist, create it
         if e.response.get('Error', {}).get('Code') in ('ResourceNotFoundException',):
             try:
-                client.create_secret(Name=SECRET_NAME, SecretString=json.dumps(token_data))
+                client.create_secret(Name=TOKEN_SECRET_NAME, SecretString=json.dumps(token_data))
             except Exception as ce:
                 logging.error(f"Failed to create secret: {ce}")
                 raise
@@ -76,11 +102,15 @@ def emit_refresh_failure(error_type, message, original_error=None):
 
 def refresh_tokens(refresh_token):
     """Use a refresh token to obtain a new access token."""
+    client_id, client_secret = get_oauth_credentials()
+    if not client_id or not client_secret:
+        raise ValueError("OAuth credentials not available")
+    
     data = {
         'grant_type': 'refresh_token',
         'refresh_token': refresh_token,
-        'client_id': CLIENT_ID,
-        'client_secret': CLIENT_SECRET,
+        'client_id': client_id,
+        'client_secret': client_secret,
     }
     try:
         resp = requests.post(TOKEN_URL, data=data, verify=certifi.where(), timeout=15)
@@ -130,13 +160,16 @@ def get_smartsheet_client(scopes):
     # We'll only create the SDK client after we have a valid access token
     smart = None
     # Get tokens from Secrets Manager
-    token_data = get_secret()
+    token_data = get_secret(TOKEN_SECRET_NAME)
     access = None
     refresh = None
 
-    if token_data:
+    if token_data and isinstance(token_data, dict):
         access = token_data.get('accessToken')
         refresh = token_data.get('refreshToken')
+    elif token_data is not None:
+        logging.error(f"Expected token_data to be a dictionary, got {type(token_data)}: {token_data}")
+        return None
 
         # If we have an access token, create a client
         if access:
@@ -156,7 +189,7 @@ def get_smartsheet_client(scopes):
                 if access:
                     # Persist refreshed tokens
                     try:
-                        save_secret({
+                        save_token_secret({
                             "accessToken": access,
                             "refreshToken": refresh
                         })
@@ -187,11 +220,17 @@ def lambda_handler(event, context):
     AWS Lambda handler that runs the Smartsheet workspace deletion workflow.
     
     Required environment variables:
-    - SM_CLIENT_ID: Smartsheet OAuth client ID
-    - SM_CLIENT_SECRET: Smartsheet OAuth client secret
-    - SMARTSHEET_TOKEN_SECRET_NAME: Name of secret storing OAuth tokens
+    - SMARTSHEET_OAUTH_SECRET_NAME: Name of secret storing OAuth credentials (default: 'smartsheet/oauth')
+    - SMARTSHEET_TOKEN_SECRET_NAME: Name of secret storing OAuth tokens (default: 'smartsheet/tokens')
     
-    The secret should contain:
+    Required secrets in AWS Secrets Manager:
+    1. OAuth secret (default name: 'smartsheet/oauth'):
+    {
+        "client_id": "your-oauth-client-id",
+        "client_secret": "your-oauth-client-secret"
+    }
+    
+    2. Token secret (default name: 'smartsheet/tokens'):
     {
         "accessToken": "...",
         "refreshToken": "..."

@@ -21,8 +21,6 @@ CLIENT_SECRET = os.getenv('CLIENT_SECRET', None)
 REDIRECT_URI = "http://localhost:8080/callback"  # Must match app registration
 TOKEN_FILE = "smartsheet_token.json"  # File to store the Refresh Token
 
-directory_path = Path("Smartsheet Workspace Deletion/secrets")
-
 # Smartsheet OAuth endpoints
 AUTH_BASE = "https://app.smartsheet.com/b/authorize"
 TOKEN_URL = "https://api.smartsheet.com/2.0/token"

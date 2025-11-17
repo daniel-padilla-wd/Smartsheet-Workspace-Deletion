@@ -16,6 +16,25 @@ SMARTSHEET_ACCESS_TOKEN=os.getenv("SMARTSHEET_ACCESS_TOKEN")
 mega_intake_sheet=os.getenv("PROD_TEST_SHEET")
 column_titles=os.getenv("COLUMN_TITLES").split(",")
 
+class WorkspaceNotFoundError(Exception): pass
+class InvalidDateError(Exception): pass
+
+# config.py
+class Config:
+    # Loads and validates env vars
+    pass
+
+# repository.py
+class SmartsheetRepository:
+    # All API calls and error handling
+    pass
+
+# service.py
+class WorkspaceDeletionService:
+    # Business logic only, uses repository
+    pass
+
+
 def return_workspace_id(client, permalink: str) -> int:
     """
     Returns the workspace ID for a given permalink.

@@ -7,14 +7,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 
 
-load_dotenv()
+# Only load .env for local execution, not in Lambda
+if os.getenv('AWS_LAMBDA_FUNCTION_NAME') is None:
+    load_dotenv()
+    
 logging.basicConfig(level=logging.INFO)
 
-SMARTSHEET_ACCESS_TOKEN=os.getenv("SMARTSHEET_ACCESS_TOKEN")
-
-# Aquire this through the sheet properties
-mega_intake_sheet=os.getenv("PROD_TEST_SHEET")
-column_titles=os.getenv("COLUMN_TITLES").split(",")
+# Configuration - will be loaded differently in Lambda vs local
+SMARTSHEET_ACCESS_TOKEN = os.getenv("SMARTSHEET_ACCESS_TOKEN")
+mega_intake_sheet = os.getenv("PROD_TEST_SHEET")
+column_titles_env = os.getenv("COLUMN_TITLES")
+column_titles = column_titles_env.split(",") if column_titles_env else []
 
 def is_workspaces_substring(string_a: str, string_b: str)-> bool:
     """
@@ -157,26 +160,34 @@ def delete_workspace(client, workspace_id: int):
         logging.error(f"An error occurred while trying to delete workspace with ID {workspace_id}: {e}")
     
 
-def get_column_ids(client, sheet_id: int) -> dict:
+def get_column_ids(client, sheet_id: int, column_titles_list=None) -> dict:
     """
     Retrieves the IDs of specific columns in a Smartsheet by their titles.
 
     Args:
+        client: Smartsheet client instance
         sheet_id (int): The ID of the Smartsheet to query.
+        column_titles_list (list): List of column titles to look for (optional, uses global if not provided)
     Returns:
         dict: A dictionary mapping column titles to their corresponding IDs.
     """
-    columns = client.Sheets.get_columns(sheet_id,include_all=True).data
+    # Use provided list or fall back to global
+    titles_to_find = column_titles_list or column_titles
+    
+    if not titles_to_find:
+        raise ValueError("No column titles provided. Set COLUMN_TITLES environment variable or pass column_titles_list parameter.")
+    
+    columns = client.Sheets.get_columns(sheet_id, include_all=True).data
     column_ids = {}
     for column in columns:
-        if column.title in column_titles:
-            if column.title == column_titles[1]:  # Primary Column
+        if column.title in titles_to_find:
+            if column.title == titles_to_find[1]:  # Primary Column
                 column_ids["delete_date"] = column.id
-            elif column.title == column_titles[2]:  # EM Notification of Deletion Date
+            elif column.title == titles_to_find[2]:  # EM Notification of Deletion Date
                 column_ids["em_notification"] = column.id
-            elif column.title == column_titles[3]:  # Workspaces
+            elif column.title == titles_to_find[3]:  # Workspaces
                 column_ids["workspaces"] = column.id
-            elif column.title == column_titles[4]:  # status
+            elif column.title == titles_to_find[4]:  # status
                 column_ids["status"] = column.id
     return column_ids
 
@@ -200,11 +211,13 @@ def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, t
     # Workspace should be deleted if today is the deletion date and NOT the EM notification date
     return proceed_with_deletion      
 
-def update_cell(client, row_id: int, column_id: int, new_value: str):
+def update_cell(client, sheet_id: int, row_id: int, column_id: int, new_value: str):
     """ 
     Updates a specific cell in a Smartsheet row.
 
     Args:
+        client: Smartsheet client instance
+        sheet_id (int): The ID of the sheet containing the row
         row_id (int): The ID of the row containing the cell to update.
         column_id (int): The ID of the column containing the cell to update.
         new_value (str): The new value to set in the cell.
@@ -220,16 +233,18 @@ def update_cell(client, row_id: int, column_id: int, new_value: str):
     new_row.id = row_id
     new_row.cells.append(new_cell)
     try:
-        response = client.Sheets.update_rows(mega_intake_sheet, [new_row])
+        response = client.Sheets.update_rows(sheet_id, [new_row])
         logging.info(f"Cell updated successfully: {response}")
     except Exception as e:
         logging.error(f"Error updating cell: {e}")
 
-def process_row(client, column_ids: dict, row: dict):
+def process_row(client, sheet_id: int, column_ids: dict, row: dict):
     """
     Processes a single row to determine if a workspace should be deleted.
     
     Args:
+        client: The Smartsheet client instance.
+        sheet_id (int): The ID of the sheet being processed.
         column_ids (dict): A dictionary mapping column titles to their IDs.
         row (dict): The row data to process.
     """
@@ -256,25 +271,34 @@ def process_row(client, column_ids: dict, row: dict):
         
         delete_workspace(client, workspace_to_delete)
         
-        update_cell(client, extracted_row_data["row_id"], column_ids["status"], "Deleted")
+        update_cell(client, sheet_id, extracted_row_data["row_id"], column_ids["status"], "Deleted")
 
 
-def process_workspace_deletions(client, sheet_id):
+def process_workspace_deletions(client, sheet_id, column_titles_list=None):
     """
     Minimal wrapper to allow external callers (e.g. Lambda) to reuse the
     existing helpers in this module while providing their own authenticated
     Smartsheet client.
 
-    This function is intentionally non-invasive: it sets the module-level
-    `smartsheet` variable to the provided `client` and then runs the same
-    basic loop as `main()`, returning a small summary dict.
+    Args:
+        client: Authenticated Smartsheet client
+        sheet_id: ID of the sheet to process
+        column_titles_list: Optional list of column titles (uses environment if not provided)
+
+    Returns:
+        dict: Summary of processing results
     """
-    #global smartsheet
-    #smartsheet = client
+    # Use provided column titles or get from environment
+    titles_to_use = column_titles_list
+    if not titles_to_use:
+        column_titles_env = os.getenv("COLUMN_TITLES")
+        if not column_titles_env:
+            return {"error": "missing_column_titles", "detail": "COLUMN_TITLES environment variable not set and no column_titles_list provided"}
+        titles_to_use = column_titles_env.split(",")
 
     summary = {"processed_rows": 0, "skipped": 0, "errors": []}
     try:
-        column_ids = get_column_ids(client, sheet_id)
+        column_ids = get_column_ids(client, sheet_id, titles_to_use)
         rows = client.Sheets.get_sheet(sheet_id).rows
     except Exception as e:
         return {"error": "failed_to_fetch_sheet_or_columns", "detail": str(e)}
@@ -282,7 +306,7 @@ def process_workspace_deletions(client, sheet_id):
     for i, row in enumerate(rows):
         try:
             logging.info(f"Processing rows {i+1}/{len(rows)}:\n{row}")
-            process_row(client, column_ids, row)
+            process_row(client, sheet_id, column_ids, row)
             summary["processed_rows"] += 1
         except Exception as e:
             summary["skipped"] += 1
@@ -292,22 +316,41 @@ def process_workspace_deletions(client, sheet_id):
 
 def main():
     logging.info("Starting Smartsheet Workspace Deletion Script.")
+    
+    # Validate required environment variables
+    if not SMARTSHEET_ACCESS_TOKEN:
+        logging.critical("SMARTSHEET_ACCESS_TOKEN environment variable not set")
+        return
+    
+    if not mega_intake_sheet:
+        logging.critical("PROD_TEST_SHEET environment variable not set")
+        return
+        
+    if not column_titles:
+        logging.critical("COLUMN_TITLES environment variable not set")
+        return
+    
     # Initialize Smartsheet connection
     smartsheet_client = smartsheet.Smartsheet(SMARTSHEET_ACCESS_TOKEN)  
     logging.info(f"Using Mega Intake Sheet ID: {mega_intake_sheet}")
     logging.info(f"Using Column Titles: {column_titles}")
     logging.info("Fetching column IDs...")
-    column_ids = get_column_ids(smartsheet_client,mega_intake_sheet)
-    logging.info("Fetching rows...")
-    rows = smartsheet_client.Sheets.get_sheet(mega_intake_sheet).rows
-
-    logging.info(smartsheet_client.Users.get_current_user())
-
-    for i, row in enumerate(rows):
-        logging.info(f"Processing rows {i+1}/{len(rows)}:\n{row}")
-        process_row(smartsheet_client, column_ids, row)
     
-    logging.info("Smartsheet Workspace Deletion Script finished.")
+    try:
+        column_ids = get_column_ids(smartsheet_client, mega_intake_sheet)
+        logging.info("Fetching rows...")
+        rows = smartsheet_client.Sheets.get_sheet(mega_intake_sheet).rows
+
+        logging.info(smartsheet_client.Users.get_current_user())
+
+        for i, row in enumerate(rows):
+            logging.info(f"Processing rows {i+1}/{len(rows)}:\n{row}")
+            process_row(smartsheet_client, mega_intake_sheet, column_ids, row)
+        
+        logging.info("Smartsheet Workspace Deletion Script finished.")
+    except Exception as e:
+        logging.error(f"Error during processing: {e}")
+        raise
 
 if __name__ == "__main__":
     try:

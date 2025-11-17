@@ -222,6 +222,8 @@ def lambda_handler(event, context):
     Required environment variables:
     - SMARTSHEET_OAUTH_SECRET_NAME: Name of secret storing OAuth credentials (default: 'smartsheet/oauth')
     - SMARTSHEET_TOKEN_SECRET_NAME: Name of secret storing OAuth tokens (default: 'smartsheet/tokens')
+    - INTAKE_SHEET_ID: Smartsheet ID for the sheet containing deletion requests
+    - COLUMN_TITLES: Comma-separated column names for parsing the sheet
     
     Required secrets in AWS Secrets Manager:
     1. OAuth secret (default name: 'smartsheet/oauth'):
@@ -253,8 +255,21 @@ def lambda_handler(event, context):
     
     # Run the workspace deletion logic
     try:
+        # Get sheet ID from environment variable
+        sheet_id = os.getenv('INTAKE_SHEET_ID')
+        if not sheet_id:
+            error_msg = "INTAKE_SHEET_ID environment variable not set"
+            logging.error(error_msg)
+            return {
+                'statusCode': 500,
+                'body': json.dumps({
+                    'error': error_msg,
+                    'detail': 'Set INTAKE_SHEET_ID environment variable with the Smartsheet ID'
+                })
+            }
+        
         from main import process_workspace_deletions
-        result = process_workspace_deletions(client)
+        result = process_workspace_deletions(client, sheet_id)
         return {
             'statusCode': 200,
             'body': json.dumps({

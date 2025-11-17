@@ -150,15 +150,17 @@ def refresh_tokens(refresh_token):
 # No need for a separate save_tokens function - we can use save_secret directly
 
 
-def get_smartsheet_client(scopes):
+def get_smartsheet_client(scopes=None):
     """
     Initializes the Smartsheet client, handling OAuth 2.0 authentication.
-    If a saved refresh token exists, it refreshes the access token.
-    Otherwise, it initiates the manual OAuth flow to get the initial tokens.
+    Attempts to use existing access token, or refreshes using refresh token if needed.
+    
+    Args:
+        scopes: OAuth scopes (unused in current implementation, kept for compatibility)
+    
+    Returns:
+        smartsheet.Smartsheet: Authenticated Smartsheet client or None if authentication fails
     """
-
-    # We'll only create the SDK client after we have a valid access token
-    smart = None
     # Get tokens from Secrets Manager
     token_data = get_secret(TOKEN_SECRET_NAME)
     access = None
@@ -171,38 +173,37 @@ def get_smartsheet_client(scopes):
         logging.error(f"Expected token_data to be a dictionary, got {type(token_data)}: {token_data}")
         return None
 
-        # If we have an access token, create a client
-        if access:
-            # The Smartsheet SDK has evolved and different versions accept different patterns
-            # Try the most common pattern first
-            smart = smartsheet.Smartsheet()
-            smart.access_token = access
-            return smart
+    # If we have an access token, create a client
+    if access:
+        smart = smartsheet.Smartsheet()
+        smart.access_token = access
+        return smart
 
-        # If no access but have a refresh token, attempt to refresh
-        if refresh:
-            logging.info("Attempting to refresh token using saved refresh token...")
-            try:
-                new = refresh_tokens(refresh)
-                access = new.get('access_token') or new.get('accessToken')
-                refresh = new.get('refresh_token') or new.get('refreshToken')
-                if access:
-                    # Persist refreshed tokens
-                    try:
-                        save_token_secret({
-                            "accessToken": access,
-                            "refreshToken": refresh
-                        })
-                    except Exception as e:
-                        logging.warning(f"Failed to persist refreshed tokens: {e}")
-
-                    # Create client with refreshed access token
-                    smart = smartsheet.Smartsheet()
-                    smart.access_token = access
+    # If no access but have a refresh token, attempt to refresh
+    if refresh:
+        logging.info("Attempting to refresh token using saved refresh token...")
+        try:
+            new_tokens = refresh_tokens(refresh)
+            access = new_tokens.get('access_token') or new_tokens.get('accessToken')
+            refresh = new_tokens.get('refresh_token') or new_tokens.get('refreshToken')
+            
+            if access:
+                # Persist refreshed tokens
+                try:
+                    save_token_secret({
+                        "accessToken": access,
+                        "refreshToken": refresh
+                    })
                     logging.info("Token refresh successful.")
-                    return smart
-            except Exception as e:
-                logging.warning(f"Refresh failed: {e}")
+                except Exception as e:
+                    logging.warning(f"Failed to persist refreshed tokens: {e}")
+
+                # Create client with refreshed access token
+                smart = smartsheet.Smartsheet()
+                smart.access_token = access
+                return smart
+        except Exception as e:
+            logging.warning(f"Refresh failed: {e}")
 
     # If we reach here, no valid tokens exist
     logging.error("No valid tokens available in Secrets Manager. Ensure the secret exists and contains valid tokens.")

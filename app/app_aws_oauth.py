@@ -10,8 +10,8 @@ from botocore.exceptions import ClientError
 
 # --- Configuration ---
 # Required environment variables for Lambda
-OAUTH_SECRET_NAME = os.getenv('SMARTSHEET_OAUTH_SECRET_NAME', 'smartsheet/oauth')
-TOKEN_SECRET_NAME = os.getenv('SMARTSHEET_TOKEN_SECRET_NAME', 'smartsheet/tokens')
+OAUTH_SECRET_NAME = "SMARTSHEET_OAUTH_SECRET"
+TOKEN_SECRET_NAME = "SMARTSHEET_TOKEN_SECRET"
 
 # Smartsheet OAuth endpoint for token refresh
 TOKEN_URL = "https://api.smartsheet.com/2.0/token"

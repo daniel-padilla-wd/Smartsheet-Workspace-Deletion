@@ -254,6 +254,22 @@ def lambda_handler(event, context):
             })
         }
     
+    # Verify authentication by getting current user
+    try:
+        current = client.Users.get_current_user()
+        # Print a brief summary (handle different SDK return shapes)
+        user_email = None
+        if hasattr(current, 'email'):
+            user_email = current.email
+        elif isinstance(current, dict):
+            user_email = current.get('email') or current.get('result')
+        else:
+            # fallback to string representation
+            user_email = str(current)
+        logging.info(f"Authenticated as: {user_email}")
+    except Exception as e:
+        logging.warning(f"Warning: verification call failed: {e}")
+    
     # Run the workspace deletion logic
     try:
         # Get sheet ID from environment variable

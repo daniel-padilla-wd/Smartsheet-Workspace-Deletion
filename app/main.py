@@ -288,6 +288,7 @@ def process_workspace_deletions(client, sheet_id, column_titles_list=None):
     Returns:
         dict: Summary of processing results
     """
+    """
     # Use provided column titles or get from environment
     titles_to_use = column_titles_list
     if not titles_to_use:
@@ -295,7 +296,8 @@ def process_workspace_deletions(client, sheet_id, column_titles_list=None):
         if not column_titles_env:
             return {"error": "missing_column_titles", "detail": "COLUMN_TITLES environment variable not set and no column_titles_list provided"}
         titles_to_use = column_titles_env.split(",")
-
+    """
+    titles_to_use = "Primary Column,Deletion Date (PSA Project End Date + 90 Days),EM Notification of Deletion Date,Workspaces,Status"
     summary = {"processed_rows": 0, "skipped": 0, "errors": []}
     try:
         column_ids = get_column_ids(client, sheet_id, titles_to_use)

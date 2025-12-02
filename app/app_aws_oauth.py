@@ -40,18 +40,24 @@ def get_secret_string(secret_name):
 
 def get_oauth_credentials():
     """Retrieve OAuth client ID and secret from separate AWS Secrets Manager secrets."""
-    client_id = json.loads(get_secret_string(CLIENT_ID_SECRET))["CLIENT_ID"]
-    client_secret = json.loads(get_secret_string(CLIENT_SECRET_SECRET))["CLIENT_SECRET"]
+    client_id_json = get_secret_string(CLIENT_ID_SECRET)
+    client_secret_json = get_secret_string(CLIENT_SECRET_SECRET)
+    
+    if not client_id_json or not client_secret_json:
+        missing = []
+        if not client_id_json: missing.append(CLIENT_ID_SECRET)
+        if not client_secret_json: missing.append(CLIENT_SECRET_SECRET)
+        logging.error(f"Failed to retrieve OAuth credentials from secrets: {', '.join(missing)}")
+        return None, None
+    
+    client_id = json.loads(client_id_json).get("client_id")
+    client_secret = json.loads(client_secret_json).get("client_secret")
     
     if client_id and client_secret:
         return client_id, client_secret
     else:
-        missing = []
-        if not client_id: missing.append(CLIENT_ID_SECRET)
-        if not client_secret: missing.append(CLIENT_SECRET_SECRET)
-        logging.error(f"Failed to retrieve OAuth credentials from secrets: {', '.join(missing)}")
-    
-    return None, None
+        logging.error("OAuth credentials secrets exist but do not contain expected keys")
+        return None, None
 
 
 def save_tokens(access_token: str, refresh_token: str):
@@ -172,14 +178,16 @@ def get_smartsheet_client(scopes=None):
     Returns:
         smartsheet.Smartsheet: Authenticated Smartsheet client or None if authentication fails
     """
-    # Get tokens from separate Secrets Manager secrets
-    access = json.loads(get_secret_string(ACCESS_TOKEN_SECRET))["accessToken"]
-    refresh = json.loads(get_secret_string(REFRESH_TOKEN_SECRET))["refreshToken"]
+    # Get tokens from separate Secrets Manager secrets (JSON strings)
+    access_json = get_secret_string(ACCESS_TOKEN_SECRET)
+    refresh_json = get_secret_string(REFRESH_TOKEN_SECRET)
+    
+    access = json.loads(access_json).get("access_token") if access_json else None
+    refresh = json.loads(refresh_json).get("refresh_token") if refresh_json else None
 
-    # If we have an access token, create a client
+    # If we have an access token, create a client with the token
     if access:
-        smart = smartsheet.Smartsheet()
-        smart.access_token = access
+        smart = smartsheet.Smartsheet(access_token=access)
         return smart
 
     # If no access but have a refresh token, attempt to refresh
@@ -199,8 +207,7 @@ def get_smartsheet_client(scopes=None):
                     logging.warning(f"Failed to persist refreshed tokens: {e}")
 
                 # Create client with refreshed access token
-                smart = smartsheet.Smartsheet()
-                smart.access_token = access
+                smart = smartsheet.Smartsheet(access_token=access)
                 return smart
         except Exception as e:
             logging.warning(f"Refresh failed: {e}")

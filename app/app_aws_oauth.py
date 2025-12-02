@@ -40,8 +40,8 @@ def get_secret_string(secret_name):
 
 def get_oauth_credentials():
     """Retrieve OAuth client ID and secret from separate AWS Secrets Manager secrets."""
-    client_id = get_secret_string(CLIENT_ID_SECRET)["CLIENT_ID"]
-    client_secret = get_secret_string(CLIENT_SECRET_SECRET)["CLIENT_SECRET"]
+    client_id = eval(get_secret_string(CLIENT_ID_SECRET))["CLIENT_ID"]
+    client_secret = eval(get_secret_string(CLIENT_SECRET_SECRET))["CLIENT_SECRET"]
     
     if client_id and client_secret:
         return client_id, client_secret
@@ -173,8 +173,8 @@ def get_smartsheet_client(scopes=None):
         smartsheet.Smartsheet: Authenticated Smartsheet client or None if authentication fails
     """
     # Get tokens from separate Secrets Manager secrets
-    access = get_secret_string(ACCESS_TOKEN_SECRET)["accessToken"]
-    refresh = get_secret_string(REFRESH_TOKEN_SECRET)["refreshToken"]
+    access = eval(get_secret_string(ACCESS_TOKEN_SECRET))["accessToken"]
+    refresh = eval(get_secret_string(REFRESH_TOKEN_SECRET))["refreshToken"]
 
     # If we have an access token, create a client
     if access:

@@ -10,10 +10,10 @@ from botocore.exceptions import ClientError
 
 # --- Configuration ---
 # AWS Secrets Manager secret names
-ACCESS_TOKEN_SECRET = "ausw2p-smgr-smt-access-token-001"
-REFRESH_TOKEN_SECRET = "ausw2p-smgr-smt-refresh-token-002"
-CLIENT_ID_SECRET = "ausw2p-smgr-smt-client-id-003"
-CLIENT_SECRET_SECRET = "ausw2p-smgr-smt-client-secret-004"
+ACCESS_TOKEN_SECRET = "accessToken"
+REFRESH_TOKEN_SECRET = "refreshToken"
+CLIENT_ID_SECRET = "CLIENT_ID"
+CLIENT_SECRET_SECRET = "CLIENT_SECRET"
 
 # Smartsheet OAuth endpoint for token refresh
 TOKEN_URL = "https://api.smartsheet.com/2.0/token"
@@ -24,6 +24,7 @@ def get_secret_string(secret_name):
     client = boto3.client('secretsmanager')
     try:
         resp = client.get_secret_value(SecretId=secret_name)
+
         if 'SecretString' in resp:
             return resp['SecretString']
         else:
@@ -221,7 +222,8 @@ def lambda_handler(event, context):
     
     Required environment variables:
     - INTAKE_SHEET_ID: Smartsheet ID for the sheet containing deletion requests
-    - COLUMN_TITLES: Comma-separated column names for parsing the sheet
+    - COLUMN_TITLES: (Optional) Comma-separated column names for parsing the sheet.
+                     Falls back to default if not provided.
     
     Required secrets in AWS Secrets Manager (plain text strings):
     1. ausw2p-smgr-smt-access-token-001: Smartsheet access token

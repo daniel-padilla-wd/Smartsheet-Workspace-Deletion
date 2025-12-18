@@ -262,6 +262,21 @@ def lambda_handler(event, context):
     """
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     
+    # Test VPC connectivity to api.smartsheet.com
+    try:
+        import socket
+        logging.info("Testing DNS resolution for api.smartsheet.com...")
+        ip = socket.gethostbyname("api.smartsheet.com")
+        logging.info(f"DNS resolved api.smartsheet.com to {ip}")
+        
+        logging.info("Testing TCP connection to api.smartsheet.com:443...")
+        sock = socket.create_connection(("api.smartsheet.com", 443), timeout=5)
+        sock.close()
+        logging.info("TCP connection to api.smartsheet.com:443 successful")
+    except Exception as e:
+        logging.error(f"VPC connectivity test failed: {e}")
+        logging.error("Lambda cannot reach api.smartsheet.com. Check VPC NAT Gateway, Security Groups, and Route Tables.")
+    
     # Get authenticated Smartsheet client
     client = get_smartsheet_client(REQUIRED_SCOPES)
     if not client:

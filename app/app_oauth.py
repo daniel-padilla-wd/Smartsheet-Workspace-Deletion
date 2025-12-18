@@ -91,7 +91,7 @@ def get_smartsheet_client(scopes):
                 access = token_data.get('accessToken')
                 refresh = token_data.get('refreshToken')
                 if access:
-                    # Instantiate client with the existing access token (prefer constructor)
+                    # Instantiate client with the existing access token
                     try:
                         smart = smartsheet.Smartsheet(access)
                     except Exception:
@@ -103,35 +103,43 @@ def get_smartsheet_client(scopes):
                             try:
                                 setattr(smart, 'access_token', access)
                             except Exception:
-                                # If we cannot set attribute, ignore; we'll recreate later when needed
                                 pass
-
-                if refresh:
-                    # Attempt to refresh tokens using HTTP API
-                    logging.info("Attempting to refresh token using saved refresh token...")
+                    
+                    # Try to use the existing access token first
+                    logging.info("Checking if saved access token is still valid...")
                     try:
-                        new = refresh_tokens(refresh)
-                        access = new.get('access_token') or new.get('accessToken')
-                        refresh = new.get('refresh_token') or new.get('refreshToken')
-                        if access:
-                            # Recreate client with the new access token, or set attribute
-                            try:
-                                smart = smartsheet.Smartsheet(access)
-                            except Exception:
-                                try:
-                                    smart = smartsheet.Smartsheet(access_token=access)
-                                except Exception:
-                                    if smart is None:
-                                        smart = smartsheet.Smartsheet()
-                            try:
-                                setattr(smart, 'access_token', access)
-                            except Exception:
-                                pass
-                        save_tokens(access, refresh)
-                        logging.info("Token refresh successful.")
+                        # Test the token with a simple API call
+                        smart.Users.get_current_user()
+                        logging.info("Saved access token is still valid. Using it.")
                         return smart
                     except Exception as e:
-                        logging.warning(f"Refresh failed: {e}. Will start new auth flow.")
+                        logging.info(f"Access token expired or invalid: {e}")
+                        # Token is invalid, try to refresh if we have a refresh token
+                        if refresh:
+                            logging.info("Attempting to refresh token using saved refresh token...")
+                            try:
+                                new = refresh_tokens(refresh)
+                                access = new.get('access_token') or new.get('accessToken')
+                                refresh = new.get('refresh_token') or new.get('refreshToken')
+                                if access:
+                                    # Recreate client with the new access token
+                                    try:
+                                        smart = smartsheet.Smartsheet(access)
+                                    except Exception:
+                                        try:
+                                            smart = smartsheet.Smartsheet(access_token=access)
+                                        except Exception:
+                                            if smart is None:
+                                                smart = smartsheet.Smartsheet()
+                                    try:
+                                        setattr(smart, 'access_token', access)
+                                    except Exception:
+                                        pass
+                                save_tokens(access, refresh)
+                                logging.info("Token refresh successful.")
+                                return smart
+                            except Exception as refresh_error:
+                                logging.warning(f"Refresh failed: {refresh_error}. Will start new auth flow.")
         except Exception as e:
             logging.warning(f"Failed to use stored token: {e}. Initiating manual flow.")
 

@@ -180,17 +180,39 @@ def get_smartsheet_client(scopes=None):
     """
     # Get tokens from separate Secrets Manager secrets (JSON strings)
     access_json = get_secret_string(ACCESS_TOKEN_SECRET)
+    print(f"get_smartsheet_client.access_json: {access_json}")
     refresh_json = get_secret_string(REFRESH_TOKEN_SECRET)
+    print(f"get_smartsheet_client.refresh_json: {refresh_json}")
     
     access = json.loads(access_json).get("accessToken") if access_json else None
+    print(f"get_smartsheet_client.access: {access}")
     refresh = json.loads(refresh_json).get("refreshToken") if refresh_json else None
+    print(f"get_smartsheet_client.refresh: {refresh}")
 
-    # If we have an access token, create a client with the token
+    # If we have an access token, test if it's still valid
     if access:
         smart = smartsheet.Smartsheet(access_token=access)
-        return smart
-
-    # If no access but have a refresh token, attempt to refresh
+        logging.info("Checking if saved access token is still valid...")
+        try:
+            # Test the token with a simple API call
+            smart.Users.get_current_user()
+            logging.info("Saved access token is still valid. Using it.")
+            return smart
+        except smartsheet.exceptions.ApiError as e:
+            # Only treat authentication errors as token expiration
+            if e.error.status_code in (401, 403):
+                logging.info(f"Access token expired or unauthorized (HTTP {e.error.status_code})")
+                # Token is invalid, continue to refresh logic below
+            else:
+                # Other API errors - log but still return the client to avoid refresh loops
+                logging.warning(f"API validation check failed with non-auth error: {e}. Proceeding with token anyway.")
+                return smart
+        except Exception as e:
+            # Network or other errors - don't treat as token expiration
+            logging.warning(f"Token validation check failed with error: {e}. Proceeding with token anyway.")
+            return smart
+    
+    # If no valid access token but have a refresh token, attempt to refresh
     if refresh:
         logging.info("Attempting to refresh token using saved refresh token...")
         try:

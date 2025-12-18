@@ -50,8 +50,8 @@ def get_oauth_credentials():
         logging.error(f"Failed to retrieve OAuth credentials from secrets: {', '.join(missing)}")
         return None, None
     
-    client_id = json.loads(client_id_json).get("client_id")
-    client_secret = json.loads(client_secret_json).get("client_secret")
+    client_id = json.loads(client_id_json).get("CLIENT_ID")
+    client_secret = json.loads(client_secret_json).get("CLIENT_SECRET")
     
     if client_id and client_secret:
         return client_id, client_secret
@@ -182,8 +182,8 @@ def get_smartsheet_client(scopes=None):
     access_json = get_secret_string(ACCESS_TOKEN_SECRET)
     refresh_json = get_secret_string(REFRESH_TOKEN_SECRET)
     
-    access = json.loads(access_json).get("access_token") if access_json else None
-    refresh = json.loads(refresh_json).get("refresh_token") if refresh_json else None
+    access = json.loads(access_json).get("accessToken") if access_json else None
+    refresh = json.loads(refresh_json).get("refreshToken") if refresh_json else None
 
     # If we have an access token, create a client with the token
     if access:

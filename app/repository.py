@@ -201,3 +201,4 @@ class SmartsheetRepository:
         except Exception as e:
             logging.error(f"Failed to get current user: {e}")
             raise SmartsheetAPIError(f"Failed to get current user: {e}")
+        

@@ -395,6 +395,7 @@ class WorkspaceDeletionService:
         Returns:
             bool: True if row was processed successfully, False otherwise
         """
+        
         try:
             # Extract row data
             row_data = self.extract_row_data(row, column_ids)

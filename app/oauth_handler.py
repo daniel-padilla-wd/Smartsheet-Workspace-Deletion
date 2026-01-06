@@ -114,7 +114,10 @@ def get_secret_string(secret_name):
         resp = client.get_secret_value(SecretId=secret_name)
         
         if 'SecretString' in resp:
-            return resp['SecretString']
+            secret_string = eval(resp['SecretString'])
+            for key in secret_string:
+                return secret_string[key]
+            #return resp['SecretString']
         else:
             logging.error(f"Secret {secret_name} does not contain SecretString")
             return None

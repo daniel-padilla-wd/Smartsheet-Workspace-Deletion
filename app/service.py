@@ -229,7 +229,8 @@ class WorkspaceDeletionService:
                 logging.error(error_msg)
                 return {"error": error_msg, "summary": summary}
         else:
-            sheet_id = config.S_INTAKE_SHEET_ID
+            logging.info("Using prod sheet ID from config")
+            sheet_id = config.INTAKE_SHEET_ID
         
         # Get sheet data
         try:
@@ -257,10 +258,10 @@ class WorkspaceDeletionService:
                 # Extract row data
                 extracted_data = self.extract_row_data_with_column_ids(
                     row,
-                    config.S_FOLDER_URL_ID,
-                    config.S_DELETION_DATE_ID,
-                    config.S_EM_NOTIFICATION_ID,
-                    config.S_DELETION_STATUS_ID
+                    config.COLUMN_TITLES["folder_url"],
+                    config.COLUMN_TITLES["deletion_date"],
+                    config.COLUMN_TITLES["em_notification_date"],
+                    config.COLUMN_TITLES["deletion_status"]
                 )
                 
                 summary["processed_rows"] += 1
@@ -332,7 +333,7 @@ class WorkspaceDeletionService:
                     update_success = self.repository.update_cell(
                         sheet_id=sheet_id,
                         row_id=extracted_data["row_id"],
-                        column_id=config.S_DELETION_STATUS_ID,
+                        column_id=config.COLUMN_TITLES["deletion_status"],
                         new_value="Deleted"
                     )
                     if not update_success:

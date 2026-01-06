@@ -7,6 +7,7 @@ the workflow without direct API calls.
 """
 
 import logging
+import pandas as pd
 from typing import Dict, List, Optional, Any
 from repository import SmartsheetRepository, SmartsheetAPIError
 from utils import (
@@ -291,14 +292,39 @@ class WorkspaceDeletionService:
                     summary["skipped"] += 1
                     continue
                 
-                # Get workspace ID from folder URL
-                workspace_id = self.get_parent_workspace_id_from_sheet(folder_url)
-                if not workspace_id:
-                    logging.error(f"Could not retrieve workspace ID for folder URL: {folder_url}")
+                # Get workspace ID from CSV lookup
+                try:
+                    workspace_df = pd.read_csv("intake_sheet_w_workspaces_data.csv")
+                    matched_row = workspace_df[workspace_df['folder_url_hyperlink'] == folder_url]
+                    
+                    if matched_row.empty:
+                        logging.error(f"Could not find workspace ID for folder URL: {folder_url}")
+                        summary["errors"].append({
+                            "row_index": i,
+                            "row_id": row.id,
+                            "error": "Folder URL not found in workspace data CSV"
+                        })
+                        summary["skipped"] += 1
+                        continue
+                    
+                    workspace_id = int(matched_row.iloc[0]['workspace_id'])
+                    logging.info(f"Found workspace ID {workspace_id} for folder URL: {folder_url}")
+                    
+                except FileNotFoundError:
+                    logging.error("intake_sheet_w_workspaces_data.csv not found")
                     summary["errors"].append({
                         "row_index": i,
                         "row_id": row.id,
-                        "error": "Failed to get workspace ID"
+                        "error": "Workspace data CSV file not found"
+                    })
+                    summary["skipped"] += 1
+                    continue
+                except Exception as e:
+                    logging.error(f"Error reading workspace data CSV: {e}")
+                    summary["errors"].append({
+                        "row_index": i,
+                        "row_id": row.id,
+                        "error": f"CSV lookup error: {str(e)}"
                     })
                     summary["skipped"] += 1
                     continue

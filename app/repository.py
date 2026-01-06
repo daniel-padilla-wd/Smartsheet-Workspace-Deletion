@@ -46,8 +46,21 @@ class SmartsheetRepository:
             SmartsheetAPIError: If the API call fails
         """
         try:
+            all_sheets = []
+            
+            # Get first page
             response = self.client.Sheets.list_sheets(include_all=True)
-            return response.data
+            all_sheets.extend(response.data)
+            logging.info(f"Retrieved page 1/{response.total_pages} with {len(response.data)} sheets")
+            
+            # Get remaining pages
+            for page in range(2, response.total_pages + 1):
+                response = self.client.Sheets.list_sheets(include_all=True, page=page)
+                all_sheets.extend(response.data)
+                logging.info(f"Retrieved page {page}/{response.total_pages} with {len(response.data)} sheets")
+            
+            logging.info(f"Total sheets retrieved: {len(all_sheets)}")
+            return all_sheets
         except Exception as e:
             logging.error(f"Failed to list sheets: {e}")
             raise SmartsheetAPIError(f"Failed to list sheets: {e}")

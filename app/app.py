@@ -42,7 +42,9 @@ def main():
     logging.info(f"Authenticated as: {current_user.email if current_user else 'Unknown'}")
     
     # Process the deletion workflow
-    sheet_url = "https://app.smartsheet.com/sheets/jgcJXmr2fhvvgv48XWWWvP2w2RrJ4Qjp75ff4VQ1"
+    #sheet_url = "https://app.smartsheet.com/sheets/jgcJXmr2fhvvgv48XWWWvP2w2RrJ4Qjp75ff4VQ1"
+    
+    sheet_url = "https://app.smartsheet.com/sheets/w7FM6MgHX8p69vWvXwRp74f2m6qHPHjwrmpqRj61"
     
     logging.info(f"Starting workspace deletion workflow for sheet: {sheet_url}")
     summary = ss_workflow.process_deletion_workflow(sheet_url)

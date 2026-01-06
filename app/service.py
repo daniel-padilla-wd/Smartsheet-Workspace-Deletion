@@ -221,13 +221,15 @@ class WorkspaceDeletionService:
             "skipped": 0,
             "errors": []
         }
-        
-        # Find sheet by permalink
-        sheet_id = self.find_sheet_by_permalink(sheet_url)
-        if not sheet_id:
-            error_msg = f"Could not find sheet for URL: {sheet_url}"
-            logging.error(error_msg)
-            return {"error": error_msg, "summary": summary}
+        if sheet_url == "https://app.smartsheet.com/sheets/jgcJXmr2fhvvgv48XWWWvP2w2RrJ4Qjp75ff4VQ1":
+            # Find sheet by permalink
+            sheet_id = self.find_sheet_by_permalink(sheet_url)
+            if not sheet_id:
+                error_msg = f"Could not find sheet for URL: {sheet_url}"
+                logging.error(error_msg)
+                return {"error": error_msg, "summary": summary}
+        else:
+            sheet_id = config.S_INTAKE_SHEET_ID
         
         # Get sheet data
         try:

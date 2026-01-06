@@ -132,28 +132,17 @@ def get_oauth_credentials_from_aws():
     Returns:
         tuple: (client_id, client_secret) or (None, None) if retrieval fails
     """
-    client_id_json = get_secret_string(CLIENT_ID_SECRET)
-    client_secret_json = get_secret_string(CLIENT_SECRET_SECRET)
+    client_id = get_secret_string(CLIENT_ID_SECRET)
+    client_secret = get_secret_string(CLIENT_SECRET_SECRET)
     
-    if not client_id_json or not client_secret_json:
+    if not client_id or not client_secret:
         missing = []
-        if not client_id_json: missing.append(CLIENT_ID_SECRET)
-        if not client_secret_json: missing.append(CLIENT_SECRET_SECRET)
+        if not client_id: missing.append(CLIENT_ID_SECRET)
+        if not client_secret: missing.append(CLIENT_SECRET_SECRET)
         logging.error(f"Failed to retrieve OAuth credentials from secrets: {', '.join(missing)}")
         return None, None
     
-    try:
-        client_id = json.loads(client_id_json).get("CLIENT_ID")
-        client_secret = json.loads(client_secret_json).get("CLIENT_SECRET")
-        
-        if client_id and client_secret:
-            return client_id, client_secret
-        else:
-            logging.error("OAuth credentials secrets exist but do not contain expected keys")
-            return None, None
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to parse OAuth credentials JSON: {e}")
-        return None, None
+    return client_id, client_secret
 
 
 def save_tokens_to_aws(access_token, refresh_token):
@@ -218,13 +207,10 @@ def load_tokens_from_aws():
     Returns:
         tuple: (access_token, refresh_token) or (None, None) if not found
     """
-    access_json = get_secret_string(ACCESS_TOKEN_SECRET)
-    refresh_json = get_secret_string(REFRESH_TOKEN_SECRET)
+    access_token = get_secret_string(ACCESS_TOKEN_SECRET)
+    refresh_token = get_secret_string(REFRESH_TOKEN_SECRET)
     
-    access = json.loads(access_json).get("accessToken") if access_json else None
-    refresh = json.loads(refresh_json).get("refreshToken") if refresh_json else None
-    
-    return access, refresh
+    return access_token, refresh_token
 
 
 # ============================================================================

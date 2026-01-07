@@ -498,3 +498,76 @@ class WorkspaceDeletionService:
             return False
     
     
+    def _process_children_recursive(self, children, summary, parent_type="workspace", parent_id=None):
+        """
+        Recursively process children of a workspace or folder.
+        
+        Args:
+            children: List of child objects to process
+            summary: Dictionary to accumulate results
+            parent_type: Type of parent ("workspace" or "folder")
+            parent_id: ID of parent object
+        """
+        for child in children:
+            logging.info(f"Processing {parent_type} child: {child})")
+
+            if isinstance(child, dict):
+                logging.warning(f"Child is a dict, skipping processing: {child}")
+                summary["skipped"].append({"id": child.get('id', 'unknown'), "name": child.get('name', 'unknown'), "reason": "Child is a dict"})
+                continue
+            
+            if ("sheets" in child.permalink):
+                logging.info(f"Detected sheet {child.id} in {parent_type}")
+                summary["sheets"].append({"id": child.id, "name": child.name, "permalink": child.permalink})
+                    
+            elif "dashboards" in child.permalink or "sights" in child.permalink:
+                logging.info(f"Detected dashboard {child.id} in {parent_type}")
+                summary["dashboards"].append({"id": child.id, "name": child.name, "permalink": child.permalink})
+                    
+            elif "folders" in child.permalink:
+                logging.info(f"Detected folder {child.id} in {parent_type}")
+                summary["folders"].append({"id": child.id, "name": child.name, "permalink": child.permalink})
+                
+                # Recursively process folder contents
+                logging.info(f"Getting folder contents for folder {child.id}...")
+                folder_contents = self.repository.get_folder_children(child.id)
+                logging.info(f"Found {len(folder_contents.data)} items in folder {child.id}")
+                
+                # Recursive call for folder children
+                self._process_children_recursive(folder_contents.data, summary, parent_type="folder", parent_id=child.id)
+
+
+    def process_workspace_contents(self, workspace_id):
+        """
+        Recursively process all contents of a workspace including nested folders.
+        
+        Args:
+            workspace_id: ID of the workspace to process
+            
+        Returns:
+            dict: Summary of items found/processed by type
+        """
+        summary = {
+            "sheets": [],
+            "dashboards": [],
+            "reports": [],
+            "skipped": [],
+            "folders": []
+        }
+        
+        # Get workspace children
+        logging.info(f"Getting workspace children for workspace {workspace_id}...")
+        workspace_children = self.repository.get_workspace_children(workspace_id)
+        logging.info(f"Found {len(workspace_children.data)} children items in workspace {workspace_id}")
+        
+        # Process all workspace children
+        self._process_children_recursive(workspace_children.data, summary, parent_type="workspace", parent_id=workspace_id)
+        
+        logging.info(f"Processing complete. Summary: {len(summary['sheets'])} sheets, "
+                    f"{len(summary['dashboards'])} dashboards, {len(summary['reports'])} reports, "
+                    f"{len(summary['folders'])} folders")
+        
+        return summary
+    
+    
+    

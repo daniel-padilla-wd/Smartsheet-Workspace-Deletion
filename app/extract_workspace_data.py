@@ -369,6 +369,10 @@ def main():
     
     # Initialize repository
     ss_api = SmartsheetRepository(client)
+    
+    # Initialize service
+    from service import WorkspaceDeletionService
+    service = WorkspaceDeletionService(ss_api)
 
     #test = get_sheet_info(ss_api, 7487459868757892)
     #logging.info(f"Test sheet info: {test}")
@@ -401,17 +405,12 @@ def main():
     #print(f"Recorded {intake_count} rows from intake sheet to intake_sheet_data.csv")
 
     # Get workspace info
-    workspace_info = get_workspace_info(ss_api, 6700046944102276)
-    logging.info(f"Workspace info: {workspace_info}")
+    #workspace_info = get_workspace_info(ss_api, 6700046944102276)
+    #logging.info(f"Workspace info: {workspace_info}")
 
-    workspace_childs = ss_api.client.Workspaces.get_workspace_children(6700046944102276)
-    logging.info(f"Workspace childs: {workspace_childs}")
-
-    folder_id = 6632637314951044
-    folder_contents = ss_api.client.Folders.get_folder_children(folder_id)
-    logging.info(f"Folder contents: {folder_contents}")
-    
-    
+    # Process workspace contents using service layer
+    summary = service.process_workspace_contents(6700046944102276)
+    logging.info(f"Final summary: {json.dumps(summary, indent=2)}")
     
     logging.info("Done!")
 

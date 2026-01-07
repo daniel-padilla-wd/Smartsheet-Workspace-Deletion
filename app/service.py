@@ -266,6 +266,13 @@ class WorkspaceDeletionService:
                 )
                 
                 summary["processed_rows"] += 1
+
+                # Get folder URL
+                folder_url = extracted_data.get("folder_url")
+                if not folder_url:
+                    logging.warning(f"Row {row.id} missing folder URL, skipping")
+                    summary["skipped"] += 1
+                    continue
                 
                 # Check if required fields are present
                 if "deletion_date" not in extracted_data or "em_notification_date" not in extracted_data:
@@ -285,12 +292,7 @@ class WorkspaceDeletionService:
                 
                 logging.info(f"Workspace for row {row.row_number} should be deleted")
                 
-                # Get folder URL
-                folder_url = extracted_data.get("folder_url")
-                if not folder_url:
-                    logging.warning(f"Row {row.id} missing folder URL, skipping")
-                    summary["skipped"] += 1
-                    continue
+                
                 
                 # Get workspace ID from CSV lookup
                 try:

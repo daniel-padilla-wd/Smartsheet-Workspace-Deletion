@@ -111,6 +111,34 @@ def get_sheet_info(ss_api, sheet_id):
         return None
 
 
+def get_workspace_info(ss_api, workspace_id):
+    """
+    Get workspace information by workspace ID.
+    
+    Args:
+        ss_api: SmartsheetRepository instance
+        workspace_id: ID of the workspace to retrieve
+        
+    Returns:
+        dict: Workspace info with name, id, permalink
+              or None if not found
+    """
+    try:
+        workspace = ss_api.client.Workspaces.get_workspace(workspace_id)
+        
+        info = {
+            "name": workspace.name,
+            "id": workspace.id,
+            "permalink": workspace.permalink
+        }
+        
+        logging.info(f"Retrieved workspace: {info['name']} (ID: {info['id']})")
+        return info
+    except Exception as e:
+        logging.error(f"Failed to get workspace {workspace_id}: {e}")
+        return None
+
+
 def create_sheets_with_workspace_info(ss_api, input_file="matched_intake_sheet_data.csv", output_file="intake_sheet_w_workspaces_data.csv", batch_size=200, delay_seconds=2):
     """
     Create a CSV with sheet and workspace information.
@@ -365,12 +393,23 @@ def main():
     #print(f"Wrote {matched_count} matched intake records to matched_intake_sheet_data.csv")
     
     # Create enriched CSV with workspace information
-    enriched_count = create_sheets_with_workspace_info(ss_api)
-    print(f"Created sheets_and_workspaces.csv with {enriched_count} enriched records")
+    #enriched_count = create_sheets_with_workspace_info(ss_api)
+    #print(f"Created sheets_and_workspaces.csv with {enriched_count} enriched records")
     
     # Extract intake sheet data
     #intake_count = extract_intake_sheet_data(ss_api)
     #print(f"Recorded {intake_count} rows from intake sheet to intake_sheet_data.csv")
+
+    # Get workspace info
+    workspace_info = get_workspace_info(ss_api, 6700046944102276)
+    logging.info(f"Workspace info: {workspace_info}")
+
+    workspace_childs = ss_api.client.Workspaces.get_workspace_children(6700046944102276)
+    logging.info(f"Workspace childs: {workspace_childs}")
+
+    folder_id = 6632637314951044
+    folder_contents = ss_api.client.Folders.get_folder_children(folder_id)
+    logging.info(f"Folder contents: {folder_contents}")
     
     
     

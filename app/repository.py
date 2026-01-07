@@ -109,6 +109,110 @@ class SmartsheetRepository:
             logging.error(f"Error deleting workspace {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to delete workspace {workspace_id}: {e}")
     
+    def get_workspace_children(self, workspace_id: int) -> List[Any]:
+        """
+        Retrieve all children (sheets, folders, reports, etc.) from a workspace.
+        
+        Args:
+            workspace_id: The ID of the workspace
+            
+        Returns:
+            List[Any]: List of workspace children objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_children = []
+            page = 1
+            page_size = 100  # Maximum allowed by Smartsheet API
+            
+            while True:
+                response = self.client.Workspaces.get_workspace(
+                    workspace_id,
+                    #include_all=True,
+                    page_size=page_size,
+                    page=page
+                )
+                
+                logging.info(f"This is the response:\n{response}")
+                # Extract children from the workspace object
+                if hasattr(response, 'sheets'):
+                    all_children.extend(response.sheets)
+                if hasattr(response, 'folders'):
+                    all_children.extend(response.folders)
+                if hasattr(response, 'reports'):
+                    all_children.extend(response.reports)
+                if hasattr(response, 'sights'):
+                    all_children.extend(response.sights)
+                
+                logging.info(f"Retrieved page {page} with {len(all_children)} total children for workspace {workspace_id}")
+                
+                # Check if we've retrieved all pages
+                total_pages = getattr(response, 'total_pages', 1)
+                if page >= total_pages:
+                    break
+                
+                page += 1
+            
+            logging.info(f"Total children retrieved for workspace {workspace_id}: {len(all_children)}")
+            return all_children
+            
+        except Exception as e:
+            logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
+    
+    def get_folder_children(self, folder_id: int) -> List[Any]:
+        """
+        Retrieve all children (sheets, folders, reports, etc.) from a folder.
+        
+        Args:
+            folder_id: The ID of the folder
+            
+        Returns:
+            List[Any]: List of folder children objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_children = []
+            page = 1
+            page_size = 100  # Maximum allowed by Smartsheet API
+            
+            while True:
+                response = self.client.Folders.get_folder(
+                    folder_id,
+                    page_size=page_size,
+                    page=page
+                )
+                
+                # Extract children from the folder object
+                if hasattr(response, 'sheets'):
+                    all_children.extend(response.sheets)
+                if hasattr(response, 'folders'):
+                    all_children.extend(response.folders)
+                if hasattr(response, 'reports'):
+                    all_children.extend(response.reports)
+                if hasattr(response, 'sights'):
+                    all_children.extend(response.sights)
+                
+                logging.info(f"Retrieved page {page} with {len(all_children)} total children for folder {folder_id}")
+                
+                # Check if we've retrieved all pages
+                total_pages = getattr(response, 'total_pages', 1)
+                if page >= total_pages:
+                    break
+                
+                page += 1
+            
+            logging.info(f"Total children retrieved for folder {folder_id}: {len(all_children)}")
+            return all_children
+            
+        except Exception as e:
+            logging.error(f"Failed to get folder children for {folder_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get folder children for {folder_id}: {e}")
+    
     def get_sheet(self, sheet_id: int) -> Any:
         """
         Retrieve a sheet by its ID.

@@ -108,6 +108,34 @@ class SmartsheetRepository:
         except Exception as e:
             logging.error(f"Error deleting workspace {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to delete workspace {workspace_id}: {e}")
+        
+    def delete_folder(self, folder_id: int) -> bool:
+        """
+        Delete a folder by its ID.
+        
+        Args:
+            folder_id: The ID of the folder to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails with an unexpected error
+        """
+        try:
+            response = self.client.Folders.delete_folder(folder_id)
+            logging.info(f"Delete folder response: {response}")
+            
+            if response.message == "SUCCESS":
+                logging.info(f"Folder with ID {folder_id} deleted successfully.")
+                return True
+            else:
+                logging.error(f"Failed to delete folder with ID {folder_id}. Response: {response}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error deleting folder {folder_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to delete folder {folder_id}: {e}")
     
     def get_workspace_children(self, workspace_id: int) -> List[Any]:
         """
@@ -134,6 +162,39 @@ class SmartsheetRepository:
         except Exception as e:
             logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
+        
+    def get_workspace(self, workspace_id: int) -> Optional[Any]:
+        """
+        Retrieve workspace metadata by its ID.
+        
+        Args:
+            workspace_id: The ID of the workspace
+            
+        Returns:
+            Workspace object with metadata, or None if workspace not found (404)
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails with an error other than 404
+        """
+        workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
+        
+        # Check if workspace was not found (404)
+        if (hasattr(workspace, 'result') and 
+            hasattr(workspace.result, 'status_code') and
+            workspace.result.status_code == 404):
+            logging.info(f"Workspace {workspace_id} not found (404)")
+            return None
+        
+        # Check for other error codes
+        if hasattr(workspace, 'result') and hasattr(workspace.result, 'status_code'):
+            status_code = workspace.result.status_code
+            if status_code >= 400:
+                error_msg = f"Failed to get workspace {workspace_id}: HTTP {status_code}"
+                logging.error(error_msg)
+                raise SmartsheetAPIError(error_msg)
+        
+        logging.debug(f"Retrieved workspace {workspace_id}")
+        return workspace
     
     def get_folder_children(self, folder_id: int) -> List[Any]:
         """

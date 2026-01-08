@@ -193,3 +193,40 @@ def remove_query_string(string: str) -> str:
         'text without query'
     """
     return string.split('?')[0]
+
+
+def get_workspace_id_from_csv(folder_url: str, csv_file: str = "intake_sheet_w_workspaces_data.csv") -> Optional[int]:
+    """
+    Look up workspace ID from CSV file by matching folder URL.
+    
+    Args:
+        folder_url: The folder URL to search for
+        csv_file: Path to the CSV file containing workspace data
+        
+    Returns:
+        int or None: The workspace ID if found, None otherwise
+        
+    Raises:
+        FileNotFoundError: If the CSV file doesn't exist
+        Exception: For other CSV reading errors
+    """
+    import pandas as pd
+    
+    try:
+        workspace_df = pd.read_csv(csv_file)
+        matched_row = workspace_df[workspace_df['folder_url_hyperlink'] == folder_url]
+        
+        if matched_row.empty:
+            logging.warning(f"Could not find workspace ID for folder URL: {folder_url}")
+            return None
+        
+        workspace_id = int(matched_row.iloc[0]['workspace_id'])
+        logging.info(f"Found workspace ID {workspace_id} for folder URL: {folder_url}")
+        return workspace_id
+        
+    except FileNotFoundError:
+        logging.error(f"CSV file not found: {csv_file}")
+        raise
+    except Exception as e:
+        logging.error(f"Error reading workspace data from CSV: {e}")
+        raise

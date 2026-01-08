@@ -379,14 +379,14 @@ def main():
     
     # Extract sheets and workspaces
     #sheet_records = extract_sheets(ss_api)
-    #workspace_records = extract_workspaces(ss_api)
+    workspace_records = extract_workspaces(ss_api)
     
     # Write to CSV files
     #sheets_count = write_to_csv(sheet_records, "sheets_data.csv")
     #print(f"Recorded {sheets_count} sheets to sheets_data.csv")
     
-    #workspaces_count = write_to_csv(workspace_records, "workspace_data.csv")
-    #print(f"Recorded {workspaces_count} workspaces to workspace_data.csv")
+    workspaces_count = write_to_csv(workspace_records, "workspace_data.csv")
+    print(f"Recorded {workspaces_count} workspaces to workspace_data.csv")
 
     # Match intake sheet URLs to sheet IDs
     #matches = match_intake_to_sheets()
@@ -409,8 +409,8 @@ def main():
     #logging.info(f"Workspace info: {workspace_info}")
 
     # Process workspace contents using service layer
-    summary = service.process_workspace_contents(6700046944102276)
-    logging.info(f"Final summary: {json.dumps(summary, indent=2)}")
+    #summary = service.process_workspace_contents(6700046944102276)
+    #logging.info(f"Final summary: {json.dumps(summary, indent=2)}")
     
     logging.info("Done!")
 

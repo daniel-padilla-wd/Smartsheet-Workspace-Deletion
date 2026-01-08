@@ -41,13 +41,12 @@ def main():
     current_user = ss_api.get_current_user()
     logging.info(f"Authenticated as: {current_user.email if current_user else 'Unknown'}")
     
+    # Determine which sheet ID to use based on DEV_MODE
+    sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
+    
     # Process the deletion workflow
-    #sheet_url = "https://app.smartsheet.com/sheets/jgcJXmr2fhvvgv48XWWWvP2w2RrJ4Qjp75ff4VQ1"
-    
-    sheet_url = "https://app.smartsheet.com/sheets/w7FM6MgHX8p69vWvXwRp74f2m6qHPHjwrmpqRj61"
-    
-    logging.info(f"Starting workspace deletion workflow for sheet: {sheet_url}")
-    summary = ss_workflow.process_deletion_workflow(sheet_url)
+    logging.info(f"Starting workspace deletion workflow for sheet ID: {sheet_id}")
+    summary = ss_workflow.process_deletion_workflow(sheet_id)
     
     # Display results
     if "error" in summary:

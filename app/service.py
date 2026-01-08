@@ -16,7 +16,8 @@ from utils import (
     get_key_from_value,
     is_workspaces_substring,
     is_pattern_substring,
-    remove_query_string
+    remove_query_string,
+    get_workspace_id_from_csv
 )
 from config import config
 
@@ -199,19 +200,19 @@ class WorkspaceDeletionService:
         
         return extracted_data
     
-    def process_deletion_workflow(self, sheet_url: str) -> Dict[str, Any]:
+    def process_deletion_workflow(self, sheet_id: int) -> Dict[str, Any]:
         """
         Process the complete workspace deletion workflow for a given sheet.
         
         This is the main orchestration method that:
-        1. Finds the sheet by URL
+        1. Gets sheet data by ID
         2. Gets column IDs from config
         3. Processes each row
         4. Deletes workspaces when criteria are met
         5. Updates status
         
         Args:
-            sheet_url: The URL of the intake sheet
+            sheet_id: The ID of the intake sheet
             
         Returns:
             Dict containing processing summary
@@ -222,16 +223,6 @@ class WorkspaceDeletionService:
             "skipped": 0,
             "errors": []
         }
-        if sheet_url == "https://app.smartsheet.com/sheets/jgcJXmr2fhvvgv48XWWWvP2w2RrJ4Qjp75ff4VQ1":
-            # Find sheet by permalink
-            sheet_id = self.find_sheet_by_permalink(sheet_url)
-            if not sheet_id:
-                error_msg = f"Could not find sheet for URL: {sheet_url}"
-                logging.error(error_msg)
-                return {"error": error_msg, "summary": summary}
-        else:
-            logging.info("Using prod sheet ID from config")
-            sheet_id = config.INTAKE_SHEET_ID
         
         # Get sheet data
         try:
@@ -273,7 +264,41 @@ class WorkspaceDeletionService:
                     logging.warning(f"Row {row.id} missing folder URL, skipping")
                     summary["skipped"] += 1
                     continue
-                
+
+                # Check if workspace already deleted
+                delete_status = extracted_data.get("deletion_status", "")
+                if delete_status:
+                    logging.info(f"Row {row.id} already marked as 'Deleted', skipping")
+                    summary["skipped"] += 1
+                    continue
+
+                workspace_id = get_workspace_id_from_csv(folder_url)
+                if workspace_id is None:
+                    logging.info(f"Workspace already deleted or not found for folder URL: {folder_url}, skipping")
+                    summary["skipped"] += 1
+                    continue
+
+                workspace_metadata = self.repository.get_workspace(workspace_id)
+                if workspace_metadata is None:
+                    logging.info(f"Workspace metadata not found for workspace ID: {workspace_id}, assuming already deleted")
+                    summary["skipped"] += 1
+                    logging.info("UPDATE CELL TO 'Deleted' STATUS")
+                    try:
+                        update_deletion_status = self.repository.update_cell(
+                            sheet_id=sheet_id,
+                            row_id=extracted_data["row_id"],
+                            column_id=config.COLUMN_TITLES["deletion_status"],
+                            new_value="Deleted"
+                        )
+                        if not update_deletion_status:
+                            logging.warning(f"Failed to update deletion status for row {row.id}")
+                        else:
+                            logging.info(f"Updated deletion status for row {row.id}")
+                            summary["successful_deletions"] += 1
+                    except SmartsheetAPIError as e:
+                        logging.error(f"Error updating status for row {row.id}: {e}")
+                    continue
+
                 # Check if required fields are present
                 if "deletion_date" not in extracted_data or "em_notification_date" not in extracted_data:
                     logging.debug(f"Row {row.id} missing required date fields, skipping")
@@ -292,14 +317,10 @@ class WorkspaceDeletionService:
                 
                 logging.info(f"Workspace for row {row.row_number} should be deleted")
                 
-                
-                
                 # Get workspace ID from CSV lookup
                 try:
-                    workspace_df = pd.read_csv("intake_sheet_w_workspaces_data.csv")
-                    matched_row = workspace_df[workspace_df['folder_url_hyperlink'] == folder_url]
-                    
-                    if matched_row.empty:
+                    workspace_id = get_workspace_id_from_csv(folder_url)
+                    if workspace_id is None:
                         logging.error(f"Could not find workspace ID for folder URL: {folder_url}")
                         summary["errors"].append({
                             "row_index": i,
@@ -308,12 +329,9 @@ class WorkspaceDeletionService:
                         })
                         summary["skipped"] += 1
                         continue
-                    
-                    workspace_id = int(matched_row.iloc[0]['workspace_id'])
-                    logging.info(f"Found workspace ID {workspace_id} for folder URL: {folder_url}")
-                    
+                        
                 except FileNotFoundError:
-                    logging.error("intake_sheet_w_workspaces_data.csv not found")
+                    #logging.error("intake_sheet_w_workspaces_data.csv not found")
                     summary["errors"].append({
                         "row_index": i,
                         "row_id": row.id,
@@ -330,6 +348,19 @@ class WorkspaceDeletionService:
                     })
                     summary["skipped"] += 1
                     continue
+
+                # Process workspace contents
+                logging.info(f"Processing contents of workspace ID: {workspace_id}")
+                workspace_contents = self.process_workspace_contents(workspace_id)
+                #logging.info(f"Workspace contents summary: {workspace_contents}")
+                logging.info(f"workspace id: {workspace_id} contents - ")
+                logging.info(f"sheets: {len(workspace_contents['sheets'])}, dashboards: {len(workspace_contents['dashboards'])}, skipped: {len(workspace_contents['skipped'])}, folders: {len(workspace_contents['folders'])}")
+
+                # Delete contents before deleting workspace
+                for folder in workspace_contents['folders']:
+                    logging.info(f"Processing deletion of folder ID: {folder['id']} in workspace ID: {workspace_id}")
+                    self.repository.delete_folder(folder['id'])
+
                 
                 # Delete workspace
                 logging.info(f"Deleting workspace ID: {workspace_id}")
@@ -407,96 +438,6 @@ class WorkspaceDeletionService:
         
         return extracted_data
     
-    def process_intake_row(self, sheet_id: int, row: Any, column_ids: Dict[str, int]) -> bool:
-        """
-        Process a single row to determine if workspace should be deleted.
-        
-        This orchestrates the entire workflow:
-        1. Extract data from row
-        2. Check deletion criteria
-        3. Find workspace
-        4. Delete workspace
-        5. Update row status
-        
-        Args:
-            sheet_id: The ID of the sheet being processed
-            row: The row object to process
-            column_ids: Dictionary mapping logical names to column IDs
-            
-        Returns:
-            bool: True if row was processed successfully, False otherwise
-        """
-        
-        try:
-            # Extract row data
-            row_data = self.extract_row_data(row, column_ids)
-            
-            # Check if required fields are present
-            if "em_notification" not in row_data or "delete_date" not in row_data:
-                logging.debug(f"Row {row.id} missing required fields, skipping")
-                return False
-            
-            # Get dates
-            em_notification_date = row_data["em_notification"]["value"]
-            deletion_date = row_data["delete_date"]["value"]
-            todays_date = get_pacific_today_date()
-            
-            if not todays_date:
-                logging.error("Failed to get today's date, cannot process row")
-                return False
-            
-            # Check if workspace should be deleted
-            if not should_workspace_be_deleted(em_notification_date, deletion_date, todays_date):
-                logging.debug(f"Row {row.id} does not meet deletion criteria")
-                return False
-            
-            logging.info(f"Extracted row data:\n{row_data}")
-            logging.info("Conditions met for deletion. Proceeding to delete workspace.")
-            
-            # Get workspace permalink
-            if "workspaces" not in row_data or "hyperlink" not in row_data["workspaces"]:
-                logging.warning(f"Row {row.id} missing workspace hyperlink, skipping")
-                return False
-            
-            workspace_url = row_data["workspaces"]["hyperlink"]["url"]
-            
-            # Find workspace by permalink
-            workspace_id = self.find_workspace_by_permalink(workspace_url)
-            if workspace_id is None:
-                logging.warning("Workspace not found, skipping deletion")
-                return False
-            
-            logging.info(f"Workspace ID to delete: {workspace_id}")
-            
-            # Delete the workspace
-            try:
-                deletion_success = self.repository.delete_workspace(workspace_id)
-                if not deletion_success:
-                    logging.warning("Workspace deletion failed, skipping row update")
-                    return False
-            except SmartsheetAPIError as e:
-                logging.error(f"Error deleting workspace {workspace_id}: {e}")
-                return False
-            
-            # Update cell status
-            try:
-                self.repository.update_cell(
-                    sheet_id,
-                    row_data["row_id"],
-                    column_ids["status"],
-                    "Deleted"
-                )
-                logging.info(f"Successfully processed and deleted workspace for row {row.id}")
-                return True
-            except SmartsheetAPIError as e:
-                logging.error(f"Failed to update row status: {e}")
-                # Workspace was deleted but status update failed
-                return False
-                
-        except Exception as e:
-            logging.error(f"Unexpected error processing row {row.id}: {e}")
-            return False
-    
     
     def _process_children_recursive(self, children, summary, parent_type="workspace", parent_id=None):
         """
@@ -509,27 +450,27 @@ class WorkspaceDeletionService:
             parent_id: ID of parent object
         """
         for child in children:
-            logging.info(f"Processing {parent_type} child: {child})")
+            #logging.info(f"Processing {parent_type} child: {child})")
 
             if isinstance(child, dict):
                 logging.warning(f"Child is a dict, skipping processing: {child}")
                 summary["skipped"].append({"id": child.get('id', 'unknown'), "name": child.get('name', 'unknown'), "reason": "Child is a dict"})
                 continue
             
-            if ("sheets" in child.permalink):
-                logging.info(f"Detected sheet {child.id} in {parent_type}")
+            if "sheets" in child.permalink:
+                #logging.info(f"Detected sheet {child.id} in {parent_type}")
                 summary["sheets"].append({"id": child.id, "name": child.name, "permalink": child.permalink})
                     
             elif "dashboards" in child.permalink or "sights" in child.permalink:
-                logging.info(f"Detected dashboard {child.id} in {parent_type}")
+                #logging.info(f"Detected dashboard {child.id} in {parent_type}")
                 summary["dashboards"].append({"id": child.id, "name": child.name, "permalink": child.permalink})
                     
             elif "folders" in child.permalink:
-                logging.info(f"Detected folder {child.id} in {parent_type}")
+                #logging.info(f"Detected folder {child.id} in {parent_type}")
                 summary["folders"].append({"id": child.id, "name": child.name, "permalink": child.permalink})
                 
                 # Recursively process folder contents
-                logging.info(f"Getting folder contents for folder {child.id}...")
+                #logging.info(f"Getting folder contents for folder {child.id}...")
                 folder_contents = self.repository.get_folder_children(child.id)
                 logging.info(f"Found {len(folder_contents.data)} items in folder {child.id}")
                 
@@ -556,18 +497,16 @@ class WorkspaceDeletionService:
         }
         
         # Get workspace children
-        logging.info(f"Getting workspace children for workspace {workspace_id}...")
+        # logging.info(f"Getting workspace children for workspace {workspace_id}...")
         workspace_children = self.repository.get_workspace_children(workspace_id)
         logging.info(f"Found {len(workspace_children.data)} children items in workspace {workspace_id}")
         
         # Process all workspace children
         self._process_children_recursive(workspace_children.data, summary, parent_type="workspace", parent_id=workspace_id)
         
-        logging.info(f"Processing complete. Summary: {len(summary['sheets'])} sheets, "
-                    f"{len(summary['dashboards'])} dashboards, {len(summary['reports'])} reports, "
-                    f"{len(summary['folders'])} folders")
+        #logging.info(f"Processing complete. Summary: {len(summary['sheets'])} sheets, {len(summary['dashboards'])} dashboards, {len(summary['reports'])} reports, {len(summary['folders'])} folders")
         
         return summary
     
-    
+
     

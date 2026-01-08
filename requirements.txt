@@ -3,3 +3,4 @@ requests
 certifi
 python-dotenv
 boto3
+pandas

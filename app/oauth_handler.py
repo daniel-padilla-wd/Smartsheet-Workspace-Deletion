@@ -10,12 +10,14 @@ This module handles the complete OAuth flow including:
 """
 
 import smartsheet
+import smartsheet.exceptions as smartsheet_exceptions
 import os
 import json
 import logging
 import secrets
 import webbrowser
 import requests
+from requests import exceptions as requests_exceptions
 import certifi
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -45,8 +47,8 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
     """HTTP request handler for OAuth callback server."""
     
     # Class variables to store state and authorization code
-    expected_state = None
-    auth_code = None
+    expected_state: str | None = None
+    auth_code: str | None = None
     
     def do_GET(self):
         """Handle GET request from OAuth redirect."""
@@ -386,18 +388,12 @@ def create_smartsheet_client(access_token):
         smartsheet.Smartsheet: Authenticated client instance
     """
     try:
-        return smartsheet.Smartsheet(access_token)
-    except Exception:
-        try:
-            return smartsheet.Smartsheet(access_token=access_token)
-        except Exception:
-            # Fallback: create empty client and set attribute directly
-            smart = smartsheet.Smartsheet()
-            try:
-                setattr(smart, 'access_token', access_token)
-            except Exception:
-                pass
-            return smart
+        client = smartsheet.Smartsheet(access_token)
+    except TypeError:
+        client = smartsheet.Smartsheet(access_token=access_token)
+
+    client.errors_as_exceptions(True)
+    return client
 
 
 def validate_client(client):
@@ -415,37 +411,34 @@ def validate_client(client):
         bool: True if client is valid or error is non-auth related, False only for auth errors
     """
     try:
-        response = client.Users.get_current_user()
-        
-        # Check if response contains embedded error (SDK doesn't always raise exceptions)
-        if hasattr(response, 'to_dict'):
-            response_dict = response.to_dict()
-            if "result" in response_dict and isinstance(response_dict["result"], dict):
-                result = response_dict["result"]
-                if "errorCode" in result or "statusCode" in result:
-                    status_code = result.get("statusCode", result.get("errorCode"))
-                    if status_code in (401, 403):
-                        logging.info(f"Access token expired or unauthorized (status code: {status_code})")
-                        return False
-                    else:
-                        logging.warning(f"API validation check failed with non-auth error: {status_code}. Proceeding with token anyway.")
-                        return True
-        
+        client.Users.get_current_user()
         return True
-    except Exception as e:
-        # Check if it's a Smartsheet API error with auth status code
-        if hasattr(e, 'error') and hasattr(e.error, 'status_code'):
-            if e.error.status_code in (401, 403):
-                logging.info(f"Access token expired or unauthorized (HTTP {e.error.status_code})")
-                return False
-            else:
-                # Other API errors - don't treat as token expiration
-                logging.warning(f"API validation check failed with non-auth error: {e}. Proceeding with token anyway.")
-                return True
-        else:
-            # Network or other errors - don't treat as token expiration to avoid refresh loops
-            logging.warning(f"Token validation check failed with error: {e}. Proceeding with token anyway.")
-            return True
+    except smartsheet_exceptions.ApiError as err:
+        status_code = getattr(getattr(err, 'error', None), 'status_code', None)
+        if status_code in (401, 403):
+            logging.info(f"Access token expired or unauthorized (HTTP {status_code})")
+            return False
+        logging.warning(
+            f"API validation check failed with non-auth API error: {err}. "
+            "Proceeding with token anyway."
+        )
+        return True
+    except smartsheet_exceptions.HttpError as err:
+        if getattr(err, 'status_code', None) in (401, 403):
+            logging.info(f"Access token expired or unauthorized (HTTP {err.status_code})")
+            return False
+        logging.warning(
+            f"API validation check failed with non-auth HTTP error: {err}. "
+            "Proceeding with token anyway."
+        )
+        return True
+    except (
+        smartsheet_exceptions.UnexpectedRequestError,
+        requests_exceptions.RequestException,
+    ) as err:
+        # Network/transport issues are treated as temporary and not token-related.
+        logging.warning(f"Token validation check failed with request error: {err}. Proceeding with token anyway.")
+        return True
 
 
 def run_oauth_flow(scopes):
@@ -466,6 +459,9 @@ def run_oauth_flow(scopes):
     OAuthCallbackHandler.expected_state = state
     
     auth_url = build_auth_url(scopes, state=state)
+    if not auth_url:
+        logging.error("Failed to build OAuth authorization URL.")
+        return None
     
     print("\n--- AUTHORIZATION REQUIRED ---")
     print("Opening browser to the authorization URL. If it doesn't open, copy/paste the URL below:")

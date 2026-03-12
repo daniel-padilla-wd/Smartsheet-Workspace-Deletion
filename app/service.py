@@ -59,7 +59,7 @@ class WorkspaceDeletionService:
         Returns:
             int or None: The workspace ID if found, None otherwise
         """
-        logging.info(f"Searching for workspace with permalink: {permalink}")
+        # logging.info(f"Searching for workspace with permalink: {permalink}")
         
         try:
             workspaces = self.repository.list_workspaces()
@@ -79,6 +79,55 @@ class WorkspaceDeletionService:
                 return workspace.id
         
         logging.info(f"No workspace found with permalink: {permalink}")
+        return None
+
+    def find_workspace(
+        self,
+        workspaces: List[Any],
+        id: Optional[int] = None,
+        name: Optional[str] = None,
+        access_level: Optional[str] = None,
+        perma_link: Optional[str] = None,
+    ) -> Optional[Any]:
+        """
+        Find a workspace by matching only the provided filters.
+
+        Args:
+            workspaces: List of workspace objects to search through (required)
+            id: Workspace ID
+            name: Workspace name
+            access_level: Workspace access level (for example: "ADMIN")
+            perma_link: Workspace permalink
+
+        Returns:
+            Workspace object if a match is found, otherwise None
+
+        Raises:
+            WorkspaceDeletionError: If no filter parameter is provided or workspaces list is empty
+        """
+        if all(value is None for value in (id, name, access_level, perma_link)):
+            raise WorkspaceDeletionError(
+                "find_workspace requires at least one filter: id, name, access_level, or perma_link"
+            )
+
+        if not workspaces:
+            logging.warning("find_workspace called with empty workspaces list")
+            return None
+
+        for workspace in workspaces:
+            workspace_access_level = getattr(workspace, "access_level", None)
+            if workspace_access_level is not None:
+                workspace_access_level = str(workspace_access_level)
+
+            if id is not None and workspace.id != id:
+                continue
+            if name is not None and workspace.name != name:
+                continue
+            if access_level is not None and workspace_access_level != access_level:
+                continue
+            if perma_link is not None and workspace.permalink != perma_link:
+                continue
+            return workspace
         return None
     
     def find_sheet_by_permalink(self, permalink: str) -> Optional[int]:

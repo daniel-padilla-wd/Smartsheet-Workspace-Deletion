@@ -10,5 +10,4 @@ secrets
 *.csv
 *.log
 python
-.gitignore
-.security_config
+.security_config/*

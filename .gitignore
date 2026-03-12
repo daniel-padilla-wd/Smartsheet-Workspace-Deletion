@@ -6,3 +6,9 @@ ignore
 __pycache__
 secrets
 .DS_Store
+*.json
+*.csv
+*.log
+python
+.gitignore
+.security_config

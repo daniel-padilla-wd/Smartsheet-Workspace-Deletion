@@ -22,16 +22,30 @@ from config import config, ConfigurationError  # noqa: E402
 from oauth_handler import get_smartsheet_client  # noqa: E402
 from repository import SmartsheetRepository, SmartsheetAPIError  # noqa: E402
 from service import WorkspaceDeletionService  # noqa: E402
-from utils import remove_query_string, get_pacific_today_date, is_date_past_or_today  # noqa: E402
+from utils import (  # noqa: E402
+    remove_query_string,
+    get_pacific_today_date,
+    is_date_past_or_today,
+    setup_file_logging,
+    RowLogEntry,
+    log_row_entry,
+    get_expected_action,
+)
 
 
-def verify_deleted_workspaces(sheet_id: int) -> Dict[str, Any]:
+def verify_deleted_workspaces(
+    sheet_id: int,
+    repository: SmartsheetRepository,
+    service: WorkspaceDeletionService,
+) -> Dict[str, Any]:
     """
     Read an intake sheet and mark rows as "Deleted" when workspace permalink
     cannot be resolved.
 
     Args:
         sheet_id: Smartsheet ID of the intake sheet to process.
+        repository: Repository instance for Smartsheet API calls.
+        service: Service instance containing row parsing and lookup logic.
 
     Returns:
         Summary dictionary with processing counts and errors.
@@ -42,22 +56,6 @@ def verify_deleted_workspaces(sheet_id: int) -> Dict[str, Any]:
         "skipped": 0,
         "errors": [],
     }
-
-    try:
-        config.validate_oauth_config()
-    except ConfigurationError as err:
-        error_msg = f"Configuration error: {err}"
-        logging.error(error_msg)
-        return {"error": error_msg, "summary": summary}
-
-    client = get_smartsheet_client(config.OAUTH_SCOPES)
-    if not client:
-        error_msg = "Authentication failed"
-        logging.error(error_msg)
-        return {"error": error_msg, "summary": summary}
-
-    repository = SmartsheetRepository(client)
-    service = WorkspaceDeletionService(repository)
 
     try:
         sheet = repository.get_sheet(sheet_id)
@@ -71,11 +69,13 @@ def verify_deleted_workspaces(sheet_id: int) -> Dict[str, Any]:
         error_msg = "Failed to get today's date"
         logging.error(error_msg)
         return {"error": error_msg, "summary": summary}
+    
+    all_workspaces = repository.get_all_workspaces()
 
     rows = sheet.rows
     logging.info(f"Processing {len(rows)} rows from sheet {sheet_id}")
 
-    for index, row in enumerate(rows):
+    for index, row in enumerate(rows, start=1):
         try:
             extracted_data = service.extract_row_data_with_column_ids(
                 row,
@@ -86,54 +86,103 @@ def verify_deleted_workspaces(sheet_id: int) -> Dict[str, Any]:
             )
             summary["processed_rows"] += 1
 
+            # Extract row data for logging
+            folder_url = extracted_data.get("folder_url")
+            em_notification_date = extracted_data.get("em_notification_date")
+            deletion_status = extracted_data.get("deletion_status", "")
+
             deletion_date = extracted_data.get("deletion_date")
             if not deletion_date or not is_date_past_or_today(deletion_date, todays_date):
-                logging.info(f"Row {row.id}: deletion date '{deletion_date}' is in the future or missing, skipping")
+                expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                log_entry = RowLogEntry(
+                    row_index=index,
+                    row_id=row.id,
+                    folder_url=folder_url,
+                    deletion_date=deletion_date,
+                    em_notification_date=em_notification_date,
+                    deletion_status=deletion_status,
+                    expected_action=expected_action,
+                    automation_action="skipped - deletion date in future or missing",
+                )
+                log_row_entry(log_entry)
                 summary["skipped"] += 1
                 continue
 
-            delete_status = extracted_data.get("deletion_status", "")
-            if delete_status:
-                logging.info(f"Row {row.id}: already has deletion status, skipping")
+            if deletion_status:
+                expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                log_entry = RowLogEntry(
+                    row_index=index,
+                    row_id=row.id,
+                    folder_url=folder_url,
+                    deletion_date=deletion_date,
+                    em_notification_date=em_notification_date,
+                    deletion_status=deletion_status,
+                    expected_action=expected_action,
+                    automation_action="skipped - already has deletion status",
+                )
+                log_row_entry(log_entry)
                 summary["skipped"] += 1
                 continue
 
-            folder_url = extracted_data.get("folder_url")
             if not folder_url:
-                logging.info(f"Row {row.id}: missing folder URL, skipping")
+                expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                log_entry = RowLogEntry(
+                    row_index=index,
+                    row_id=row.id,
+                    folder_url=folder_url,
+                    deletion_date=deletion_date,
+                    em_notification_date=em_notification_date,
+                    deletion_status=deletion_status,
+                    expected_action=expected_action,
+                    automation_action="skipped - missing folder URL",
+                )
+                log_row_entry(log_entry)
                 summary["skipped"] += 1
                 continue
 
             clean_permalink = remove_query_string(str(folder_url))
-            workspace_id = service.find_workspace_by_permalink(clean_permalink)
+            workspace = service.find_workspace(workspaces=all_workspaces, perma_link=clean_permalink)
+            workspace_id = getattr(workspace, "id", None)
 
             if workspace_id is not None:
                 workspace_metadata = repository.get_workspace(workspace_id)
                 if workspace_metadata is not None:
-                    logging.info(
-                        f"Row {row.id}: workspace {workspace_id} still exists, no update"
+                    expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                    log_entry = RowLogEntry(
+                        row_index=index,
+                        row_id=row.id,
+                        folder_url=folder_url,
+                        deletion_date=deletion_date,
+                        em_notification_date=em_notification_date,
+                        deletion_status=deletion_status,
+                        expected_action=expected_action,
+                        automation_action=f"skipped - workspace {workspace_id} still exists",
                     )
+                    log_row_entry(log_entry)
                     summary["skipped"] += 1
                     continue
 
-            # If we cannot resolve the workspace by permalink, or metadata lookup fails,
-            # treat it as already deleted and mark the row.
-            update_success = repository.update_cell(
-                sheet_id=sheet_id,
-                row_id=extracted_data["row_id"],
-                column_id=config.COLUMN_TITLES["deletion_status"],
-                new_value="Deleted",
+            # Workspace appears deleted - could update cell here if enabled
+            expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+            log_entry = RowLogEntry(
+                row_index=index,
+                row_id=row.id,
+                folder_url=folder_url,
+                deletion_date=deletion_date,
+                em_notification_date=em_notification_date,
+                deletion_status=deletion_status,
+                expected_action=expected_action,
+                automation_action="marked deleted (verification only - update disabled)",
             )
-
-            if update_success:
-                logging.info(f"Row {row.id}: updated deletion status to 'Deleted'")
-                summary["updated_deleted_status"] += 1
-            else:
-                logging.warning(f"Row {row.id}: failed to update deletion status")
-                summary["skipped"] += 1
+            log_row_entry(log_entry)
 
         except Exception as err:  # Keep processing remaining rows.
-            logging.error(f"Row {getattr(row, 'id', 'unknown')}: {err}")
+            log_entry = RowLogEntry(
+                row_index=index,
+                row_id=getattr(row, "id", None),
+                automation_action=f"error - {str(err)}",
+            )
+            log_row_entry(log_entry, level="ERROR")
             summary["errors"].append(
                 {
                     "row_index": index,
@@ -148,6 +197,32 @@ def verify_deleted_workspaces(sheet_id: int) -> Dict[str, Any]:
 
 def main() -> Dict[str, Any]:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    
+    # Set up file logging for this session
+    log_file = setup_file_logging("workspace_verification")
+
+    summary_template: Dict[str, Any] = {
+        "processed_rows": 0,
+        "updated_deleted_status": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+
+    try:
+        config.validate_oauth_config()
+    except ConfigurationError as err:
+        error_msg = f"Configuration error: {err}"
+        logging.error(error_msg)
+        return {"error": error_msg, "summary": summary_template, "log_file": log_file}
+
+    client = get_smartsheet_client(config.OAUTH_SCOPES)
+    if not client:
+        error_msg = "Authentication failed"
+        logging.error(error_msg)
+        return {"error": error_msg, "summary": summary_template, "log_file": log_file}
+
+    repository = SmartsheetRepository(client)
+    service = WorkspaceDeletionService(repository)
 
     # Match app.py behavior for choosing target sheet.
     sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
@@ -156,10 +231,11 @@ def main() -> Dict[str, Any]:
         "Starting workspace verification workflow (no deletion operations enabled)"
     )
     logging.info(f"Using sheet ID: {sheet_id}")
-    summary = verify_deleted_workspaces(int(sheet_id))
+    summary = verify_deleted_workspaces(int(sheet_id), repository, service)
 
     if "error" in summary:
         logging.error(summary["error"])
+        summary["log_file"] = log_file
         return summary
 
     logging.info("=" * 60)
@@ -170,8 +246,39 @@ def main() -> Dict[str, Any]:
     logging.info(f"Skipped: {summary['skipped']}")
     logging.info(f"Errors: {len(summary['errors'])}")
     logging.info("=" * 60)
+    logging.info(f"Logs saved to: {log_file}")
 
+    summary["log_file"] = log_file
     return summary
+
+
+def tests():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    try:
+        config.validate_oauth_config()
+    except ConfigurationError as err:
+        error_msg = f"Configuration error: {err}"
+        logging.error(error_msg)
+        return {"error": error_msg}
+
+    client = get_smartsheet_client(config.OAUTH_SCOPES)
+    if not client:
+        error_msg = "Authentication failed"
+        logging.error(error_msg)
+        return {"error": error_msg}
+
+    repository = SmartsheetRepository(client)
+
+    workspaces = repository.get_all_workspaces_as_dicts()
+    if workspaces is None:
+        logging.error("Failed to retrieve workspaces for testing")
+        return {"error": "Failed to retrieve workspaces"} 
+    else:
+        logging.error(f"Here are the workspaces we found: {workspaces}")  
+
+
+
 
 
 if __name__ == "__main__":

@@ -8,9 +8,10 @@ and other helper operations that don't depend on external clients or services.
 
 import re
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from typing import Optional
+from typing import Optional, Dict, Any
 from config import config
 
 
@@ -56,10 +57,10 @@ def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
         return False
     
     if date_a <= date_b:
-        logging.debug(f"'{date_string}' is on or before today ({todays_date}). Action can proceed.")
+        #logging.debug(f"'{date_string}' is on or before today ({todays_date}). Action can proceed.")
         return True
     else:
-        logging.debug(f"'{date_string}' is in the future ({todays_date}). No action.")
+        #logging.debug(f"'{date_string}' is in the future ({todays_date}). No action.")
         return False
 
 
@@ -82,15 +83,38 @@ def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, t
     is_today_em_notification = em_notification_date == todays_date
     is_today_deletion_date = is_date_past_or_today(deletion_date, todays_date)
     proceed_with_deletion = is_today_deletion_date and not is_today_em_notification
-    
-    logging.info(
-        f"EM Notification Date: {em_notification_date}, "
-        f"Deletion Date: {deletion_date}, "
-        f"Today's Date: {todays_date}"
-    )
-    logging.info(f"Should workspace be deleted? {proceed_with_deletion}")
+
+    #logging.info(f"Should workspace be deleted? {proceed_with_deletion}")
     
     return proceed_with_deletion
+
+
+def get_expected_action(
+    deletion_date: Optional[str],
+    em_notification_date: Optional[str],
+    todays_date: str,
+) -> str:
+    """
+    Determine the expected action for a workspace based on deletion criteria.
+
+    Args:
+        deletion_date: The deletion date in 'YYYY-MM-DD' format, or None/empty
+        em_notification_date: The EM notification date in 'YYYY-MM-DD' format
+        todays_date: Today's date in 'YYYY-MM-DD' format
+
+    Returns:
+        str: One of:
+            - "MISSING_DELETION_DATE" if deletion_date is None or empty
+            - "DELETE_WORKSPACE" if should_workspace_be_deleted() returns True
+            - "KEEP_WORKSPACE" if should_workspace_be_deleted() returns False
+    """
+    if not deletion_date:
+        return "MISSING_DELETION_DATE"
+
+    if should_workspace_be_deleted(em_notification_date or "", deletion_date, todays_date):
+        return "DELETE_WORKSPACE"
+    else:
+        return "KEEP_WORKSPACE"
 
 def is_pattern_substring(string_a: str, string_b: str, pattern: str) -> bool:
     """
@@ -230,3 +254,136 @@ def get_workspace_id_from_csv(folder_url: str, csv_file: str = "intake_sheet_w_w
     except Exception as e:
         logging.error(f"Error reading workspace data from CSV: {e}")
         raise
+
+
+def setup_file_logging(session_name: str, log_dir: str = "logs") -> str:
+    """
+    Set up logging to both console and file.
+
+    This function configures the root logger to output logs to both the console and a file.
+    Useful for capturing logs from long-running operations while still seeing output.
+
+    Args:
+        session_name: Name of the session/function (used in log filename)
+        log_dir: Directory to store logs (default: "logs")
+
+    Returns:
+        str: Path to the log file
+
+    Example:
+        log_file = setup_file_logging("workspace_verification")
+        # Now all logging calls will also write to logs/workspace_verification_YYYYMMDD_HHMMSS.log
+    """
+    from pathlib import Path
+
+    # Create logs directory if it doesn't exist
+    log_path = Path(log_dir)
+    log_path.mkdir(exist_ok=True)
+
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_path / f"{session_name}_{timestamp}.log"
+
+    # Set up file handler
+    file_handler = logging.FileHandler(log_file, mode="w")
+    file_handler.setLevel(logging.DEBUG)
+
+    # Format for file logs
+    file_formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # Add file handler to root logger
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.DEBUG)
+
+    logging.info(f"Logging to file: {log_file}")
+    return str(log_file)
+
+
+@dataclass(frozen=True)
+class RowLogEntry:
+    """Structured row-level logging entry used by verification workflows."""
+
+    row_index: int
+    row_id: Optional[int] = None
+    folder_url: Optional[str] = None
+    deletion_date: Optional[str] = None
+    em_notification_date: Optional[str] = None
+    deletion_status: Optional[str] = None
+    expected_action: str = "KEEP_WORKSPACE"
+    automation_action: str = "N/A"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return normalized dictionary representation used by log output."""
+        return {
+            "row_index": self.row_index,
+            "row_id": self.row_id or "N/A",
+            "folder_url": self.folder_url or "N/A",
+            "deletion_date": self.deletion_date or "N/A",
+            "em_notification_date": self.em_notification_date or "N/A",
+            "deletion_status": self.deletion_status or "N/A",
+            "expected_action": self.expected_action,
+            "automation_action": self.automation_action,
+        }
+
+
+def build_row_log_entry(
+    row_index: int,
+    row_id: Optional[int] = None,
+    folder_url: Optional[str] = None,
+    deletion_date: Optional[str] = None,
+    em_notification_date: Optional[str] = None,
+    deletion_status: Optional[str] = None,
+    expected_action: str = "KEEP_WORKSPACE",
+    automation_action: str = "N/A",
+) -> Dict[str, Any]:
+    """
+    Build a standardized row log entry dictionary.
+
+    All optional values default to "N/A" if not provided.
+
+    Args:
+        row_index: Enumeration index of the row
+        row_id: Smartsheet row ID
+        folder_url: Folder/workspace URL
+        deletion_date: Deletion date value
+        em_notification_date: Email notification date
+        deletion_status: Deletion status value
+        expected_action: Expected action (DELETE_WORKSPACE, KEEP_WORKSPACE, MISSING_DELETION_DATE)
+        automation_action: Action taken (e.g., "skipped", "cell updated", "marked deleted")
+
+    Returns:
+        Dict with standardized log structure
+    """
+    return RowLogEntry(
+        row_index=row_index,
+        row_id=row_id,
+        folder_url=folder_url,
+        deletion_date=deletion_date,
+        em_notification_date=em_notification_date,
+        deletion_status=deletion_status,
+        expected_action=expected_action,
+        automation_action=automation_action,
+    ).to_dict()
+
+
+def log_row_entry(entry: RowLogEntry | Dict[str, Any], level: str = "INFO") -> None:
+    """
+    Log a structured row entry at the specified level.
+
+    Args:
+        entry: Dictionary from build_row_log_entry()
+        level: Logging level ("INFO", "DEBUG", "WARNING", "ERROR")
+    """
+    import json
+
+    if isinstance(entry, RowLogEntry):
+        entry = entry.to_dict()
+
+    log_message = json.dumps(entry, indent=2)
+    log_method = getattr(logging, level.lower(), logging.info)
+    log_method(log_message)

@@ -5,10 +5,8 @@ This module encapsulates all direct interactions with the Smartsheet API,
 providing a clean interface for data access and manipulation. All API calls
 and error handling are centralized here.
 """
-import json
 import logging
-from typing import Optional, List, Dict, Any
-from utils import is_workspaces_substring
+from typing import Optional, List, Any, Dict
 import smartsheet.exceptions
 
 
@@ -34,6 +32,16 @@ class SmartsheetRepository:
             client: Authenticated Smartsheet client instance
         """
         self.client = client
+
+    @staticmethod
+    def _is_not_found_error(error: Exception) -> bool:
+        """Detect 404-style errors from Smartsheet SDK exception shapes."""
+        status_code = getattr(getattr(error, "error", None), "status_code", None)
+        if status_code is None:
+            status_code = getattr(error, "status_code", None)
+        if status_code == 404:
+            return True
+        return "404" in str(error)
 
     def list_all_sheets(self) -> List[Any]:
         """
@@ -61,7 +69,7 @@ class SmartsheetRepository:
             
             logging.info(f"Total sheets retrieved: {len(all_sheets)}")
             return all_sheets
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to list sheets: {e}")
             raise SmartsheetAPIError(f"Failed to list sheets: {e}")
     
@@ -78,9 +86,79 @@ class SmartsheetRepository:
         try:
             response = self.client.Workspaces.list_workspaces(include_all=True)
             return response.data
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to list workspaces: {e}")
             raise SmartsheetAPIError(f"Failed to list workspaces: {e}")
+
+    def get_all_workspaces(self) -> List[Any]:
+        """
+        Retrieve all workspaces from Smartsheet using explicit pagination.
+
+        Returns:
+            List[Any]: List of all workspace objects from all pages
+
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_workspaces = []
+            last_key = None
+            max_items = 1000
+
+            # Token pagination with last_key/max_items replaces deprecated page/page_size.
+            while True:
+                response = self.client.Workspaces.list_workspaces(
+                    last_key=last_key,
+                    max_items=max_items,
+                    pagination_type="token",
+                )
+                page_data = getattr(response, "data", []) or []
+                # logging.debug(f"this is a page date:\n{page_data}")
+                all_workspaces.extend(page_data)
+                next_last_key = getattr(response, "last_key", None)
+
+                logging.info(
+                    f"Retrieved {len(page_data)} workspaces (running total: {len(all_workspaces)}). "
+                    f"Has more pages: {bool(next_last_key)}"
+                )
+
+                if not next_last_key:
+                    break
+                last_key = next_last_key
+
+            logging.info(f"Total workspaces retrieved: {len(all_workspaces)}")
+            return all_workspaces
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to retrieve all workspaces: {e}")
+            raise SmartsheetAPIError(f"Failed to retrieve all workspaces: {e}")
+
+    def get_all_workspaces_as_dicts(self) -> List[Dict[str, Any]]:
+        """
+        Retrieve all workspaces and serialize each workspace model to a dictionary.
+
+        Returns:
+            List[Dict[str, Any]]: Serialized workspace dictionaries
+
+        Raises:
+            SmartsheetAPIError: If workspace retrieval fails
+        """
+        workspaces = self.get_all_workspaces()
+        serialized: List[Dict[str, Any]] = []
+
+        for workspace in workspaces:
+            to_dict = getattr(workspace, "to_dict", None)
+            if callable(to_dict):
+                payload = to_dict()
+                if isinstance(payload, dict):
+                    serialized.append(payload)
+                else:
+                    serialized.append({"value": payload})
+            else:
+                # Fallback for unexpected objects that don't expose to_dict.
+                fallback = vars(workspace)
+                serialized.append(fallback if isinstance(fallback, dict) else {"value": fallback})
+
+        return serialized
     
     def delete_workspace(self, workspace_id: int) -> bool:
         """
@@ -105,7 +183,7 @@ class SmartsheetRepository:
                 logging.error(f"Failed to delete workspace with ID {workspace_id}. Response: {response}")
                 return False
                 
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Error deleting workspace {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to delete workspace {workspace_id}: {e}")
         
@@ -133,7 +211,7 @@ class SmartsheetRepository:
                 logging.error(f"Failed to delete folder with ID {folder_id}. Response: {response}")
                 return False
                 
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Error deleting folder {folder_id}: {e}")
             raise SmartsheetAPIError(f"Failed to delete folder {folder_id}: {e}")
     
@@ -159,7 +237,7 @@ class SmartsheetRepository:
             logging.debug(f"Workspace {workspace_id} children: {response}")
             return response
             
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
         
@@ -176,25 +254,16 @@ class SmartsheetRepository:
         Raises:
             SmartsheetAPIError: If the API call fails with an error other than 404
         """
-        workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
-        
-        # Check if workspace was not found (404)
-        if (hasattr(workspace, 'result') and 
-            hasattr(workspace.result, 'status_code') and
-            workspace.result.status_code == 404):
-            logging.info(f"Workspace {workspace_id} not found (404)")
-            return None
-        
-        # Check for other error codes
-        if hasattr(workspace, 'result') and hasattr(workspace.result, 'status_code'):
-            status_code = workspace.result.status_code
-            if status_code >= 400:
-                error_msg = f"Failed to get workspace {workspace_id}: HTTP {status_code}"
-                logging.error(error_msg)
-                raise SmartsheetAPIError(error_msg)
-        
-        logging.debug(f"Retrieved workspace {workspace_id}")
-        return workspace
+        try:
+            workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
+            #logging.debug(f"Retrieved workspace {workspace_id}")
+            return workspace
+        except smartsheet.exceptions.SmartsheetException as e:
+            if self._is_not_found_error(e):
+                #logging.info(f"Workspace {workspace_id} not found (404)")
+                return None
+            logging.error(f"Failed to get workspace {workspace_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get workspace {workspace_id}: {e}")
     
     def get_folder_children(self, folder_id: int) -> List[Any]:
         """
@@ -217,7 +286,7 @@ class SmartsheetRepository:
             logging.debug(f"Folder {folder_id} children: {response}")
             return response
             
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get folder children for {folder_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get folder children for {folder_id}: {e}")
     
@@ -234,20 +303,11 @@ class SmartsheetRepository:
         Raises:
             SmartsheetAPIError: If the API call fails
         """
-        response_ss_object = self.client.Sheets.get_sheet(sheet_id)
-        response = response_ss_object.to_dict()
-        
-        if "result" in response and isinstance(response["result"], dict):
-            result = response["result"]
-            if "errorCode" in result or "statusCode" in result:
-                error_code = result.get("errorCode", result.get("statusCode"))
-                error_msg = result.get("message", "Unknown error")
-                logging.error(f"Failed to get sheet {sheet_id}: {error_msg} (code: {error_code})")
-                raise SmartsheetAPIError(
-                    f"Failed to get sheet: {sheet_id}: {json.dumps(result, indent=4)})"
-                )
-        
-        return response_ss_object
+        try:
+            return self.client.Sheets.get_sheet(sheet_id)
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to get sheet {sheet_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get sheet {sheet_id}: {e}")
         
     def get_columns(self, sheet_id: int) -> List[Any]:
         """
@@ -265,7 +325,7 @@ class SmartsheetRepository:
         try:
             response = self.client.Sheets.get_columns(sheet_id, include_all=True)
             return response.data
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get columns for sheet {sheet_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get columns for sheet {sheet_id}: {e}")
     
@@ -285,7 +345,7 @@ class SmartsheetRepository:
         Raises:
             SmartsheetAPIError: If the API call fails
         """
-        logging.info(f"Updating cell in row {row_id}, column {column_id} to '{new_value}'")
+        #logging.info(f"Updating cell in row {row_id}, column {column_id} to '{new_value}'")
         
         try:
             # Build new cell value
@@ -301,10 +361,10 @@ class SmartsheetRepository:
             
             # Update the row
             response = self.client.Sheets.update_rows(sheet_id, [new_row])
-            logging.info(f"Cell updated successfully: {response}")
+            # logging.info(f"Cell updated successfully: {response}")
             return True
             
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Error updating cell: {e}")
             raise SmartsheetAPIError(f"Failed to update cell: {e}")
     
@@ -323,7 +383,7 @@ class SmartsheetRepository:
             user_email = getattr(current_user, 'email', str(current_user))
             logging.info(f"Authenticated as: {user_email}")
             return current_user
-        except Exception as e:
+        except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get current user: {e}")
             raise SmartsheetAPIError(f"Failed to get current user: {e}")
         

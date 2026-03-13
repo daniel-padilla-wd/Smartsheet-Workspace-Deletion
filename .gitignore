@@ -10,4 +10,4 @@ secrets
 *.csv
 *.log
 python
-.security_config/*
+*.yaml

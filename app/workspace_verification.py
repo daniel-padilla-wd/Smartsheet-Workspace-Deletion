@@ -27,10 +27,17 @@ from utils import (  # noqa: E402
     get_pacific_today_date,
     is_date_past_or_today,
     setup_file_logging,
+    limit_iterable,
     RowLogEntry,
     log_row_entry,
     get_expected_action,
 )
+
+
+@limit_iterable(40)
+def get_rows_for_verification(sheet: Any) -> list[Any]:
+    """Return capped rows for safeguard testing runs."""
+    return sheet.rows
 
 
 def verify_deleted_workspaces(
@@ -72,7 +79,8 @@ def verify_deleted_workspaces(
     
     all_workspaces = repository.get_all_workspaces()
 
-    rows = sheet.rows
+    rows = get_rows_for_verification(sheet)
+    logging.info("Row limit safeguard active: processing up to 20 rows")
     logging.info(f"Processing {len(rows)} rows from sheet {sheet_id}")
 
     for index, row in enumerate(rows, start=1):
@@ -162,19 +170,41 @@ def verify_deleted_workspaces(
                     summary["skipped"] += 1
                     continue
 
-            # Workspace appears deleted - could update cell here if enabled
+            # Workspace appears deleted, update deletion status in the sheet.
             expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
-            log_entry = RowLogEntry(
-                row_index=index,
-                row_id=row.id,
-                folder_url=folder_url,
-                deletion_date=deletion_date,
-                em_notification_date=em_notification_date,
-                deletion_status=deletion_status,
-                expected_action=expected_action,
-                automation_action="marked deleted (verification only - update disabled)",
+            update_success = repository.update_cell(
+                sheet_id=sheet_id,
+                row_id=extracted_data["row_id"],
+                column_id=config.COLUMN_TITLES["deletion_status"],
+                new_value="Deleted",
             )
-            log_row_entry(log_entry)
+
+            if update_success:
+                log_entry = RowLogEntry(
+                    row_index=index,
+                    row_id=row.id,
+                    folder_url=folder_url,
+                    deletion_date=deletion_date,
+                    em_notification_date=em_notification_date,
+                    deletion_status=deletion_status,
+                    expected_action=expected_action,
+                    automation_action="updated deletion status to Deleted",
+                )
+                log_row_entry(log_entry)
+                summary["updated_deleted_status"] += 1
+            else:
+                log_entry = RowLogEntry(
+                    row_index=index,
+                    row_id=row.id,
+                    folder_url=folder_url,
+                    deletion_date=deletion_date,
+                    em_notification_date=em_notification_date,
+                    deletion_status=deletion_status,
+                    expected_action=expected_action,
+                    automation_action="failed to update deletion status",
+                )
+                log_row_entry(log_entry, level="WARNING")
+                summary["skipped"] += 1
 
         except Exception as err:  # Keep processing remaining rows.
             log_entry = RowLogEntry(

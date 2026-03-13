@@ -26,7 +26,7 @@ class Config:
     required by the application.
     """
     # Mode
-    DEV_MODE = True
+    DEV_MODE = False
     
     # OAuth Configuration
     CLIENT_ID: str = os.getenv('S_APP_CLIENT_ID', '') if DEV_MODE else os.getenv('APP_CLIENT_ID', '')
@@ -51,7 +51,7 @@ class Config:
     
     
     # SANDBOX Sheet Configuration
-    S_INTAKE_SHEET_ID: str = 3553776142077828
+    S_INTAKE_SHEET_ID: int = 3553776142077828
     # Column IDs - to be set after fetching sheet details via API
     S_FOLDER_URL_ID: int = 8030922958655364
     S_DELETION_DATE_ID: int = 3568718757711748

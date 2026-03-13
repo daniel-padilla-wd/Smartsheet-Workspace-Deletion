@@ -11,8 +11,24 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from typing import Optional, Dict, Any
+from functools import wraps
+from typing import Optional, Dict, Any, Callable, Iterable, TypeVar
 from config import config
+
+
+T = TypeVar("T")
+
+
+def limit_iterable(max_items: int) -> Callable[[Callable[..., Iterable[T]]], Callable[..., list[T]]]:
+    """Limit iterable results from a function to the first max_items entries."""
+    def decorator(func: Callable[..., Iterable[T]]) -> Callable[..., list[T]]:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> list[T]:
+            return list(func(*args, **kwargs))[:max_items]
+
+        return wrapper
+
+    return decorator
 
 
 def get_pacific_today_date() -> Optional[str]:

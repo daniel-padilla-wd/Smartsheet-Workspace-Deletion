@@ -10,4 +10,3 @@ secrets
 *.csv
 *.log
 python
-*.yaml

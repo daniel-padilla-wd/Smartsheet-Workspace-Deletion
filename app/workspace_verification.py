@@ -6,6 +6,7 @@ It only reads an intake sheet and updates the deletion-status column when a
 workspace appears to already be deleted (not resolvable by permalink).
 """
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -33,23 +34,24 @@ from utils import (  # noqa: E402
     get_expected_action,
 )
 
-
-@limit_iterable(500)
+LIMIT = 500
+@limit_iterable(LIMIT)
 def get_rows_for_verification(sheet: Any) -> list[Any]:
     """Return capped rows for safeguard testing runs."""
     return sheet.rows
 
 
-def verify_deleted_workspaces(
+def verify_project_status(
     intake_sheet: Any,
     todays_date: str,
     repository: SmartsheetRepository,
     service: WorkspaceDeletionService,
     all_workspaces: list[Any],
-) -> Dict[str, Any]:
+    all_sheets: list[Any],
+) -> list[RowLogEntry]:
     """
-    Read an intake sheet and mark rows as "Deleted" when workspace permalink
-    cannot be resolved.
+    Read an intake sheet and collect a RowLogEntry for each row, noting whether
+    the workspace appears to already be deleted.
 
     Args:
         intake_sheet: Smartsheet sheet object to process.
@@ -59,18 +61,13 @@ def verify_deleted_workspaces(
         all_workspaces: Pre-fetched workspace objects used for permalink resolution.
 
     Returns:
-        Summary dictionary with processing counts and errors.
+        List of RowLogEntry objects, one per processed row.
     """
-    summary: Dict[str, Any] = {
-        "processed_rows": 0,
-        "updated_deleted_status": 0,
-        "skipped": 0,
-        "errors": [],
-    }
+    log_entries: list[RowLogEntry] = []
     
     #rows = get_rows_for_verification(intake_sheet)
+    #logging.info(f "Row limit safeguard active: processing up to {LIMIT} rows")
     rows = intake_sheet.rows
-    logging.info("Row limit safeguard active: processing up to 20 rows")
     logging.info(f"Processing {len(rows)} rows from sheet {intake_sheet.id}")
 
     for index, row in enumerate(rows, start=1):
@@ -82,16 +79,17 @@ def verify_deleted_workspaces(
                 config.COLUMN_TITLES["em_notification_date"],
                 config.COLUMN_TITLES["deletion_status"],
             )
-            summary["processed_rows"] += 1
 
             # Extract row data for logging
             folder_url = extracted_data.get("folder_url")
             em_notification_date = extracted_data.get("em_notification_date")
             deletion_status = extracted_data.get("deletion_status", "")
-
             deletion_date = extracted_data.get("deletion_date")
+
+            expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+
+            # Checks to determine if we should skip this row for verification
             if not deletion_date or not is_date_past_or_today(deletion_date, todays_date):
-                expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
                 log_entry = RowLogEntry(
                     row_index=index,
                     row_id=row.id,
@@ -103,27 +101,11 @@ def verify_deleted_workspaces(
                     automation_action="skipped - deletion date in future or missing",
                 )
                 log_row_entry(log_entry)
-                summary["skipped"] += 1
-                continue
-
-            if deletion_status:
-                expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
-                log_entry = RowLogEntry(
-                    row_index=index,
-                    row_id=row.id,
-                    folder_url=folder_url,
-                    deletion_date=deletion_date,
-                    em_notification_date=em_notification_date,
-                    deletion_status=deletion_status,
-                    expected_action=expected_action,
-                    automation_action="skipped - already has deletion status",
-                )
-                log_row_entry(log_entry)
-                summary["skipped"] += 1
+                log_entries.append(log_entry)
                 continue
 
             if not folder_url:
-                expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
                 log_entry = RowLogEntry(
                     row_index=index,
                     row_id=row.id,
@@ -135,18 +117,35 @@ def verify_deleted_workspaces(
                     automation_action="skipped - missing folder URL",
                 )
                 log_row_entry(log_entry)
-                summary["skipped"] += 1
+                log_entries.append(log_entry)
                 continue
 
             clean_permalink = remove_query_string(str(folder_url))
-            workspace = service.find_workspace(workspaces=all_workspaces, perma_link=clean_permalink)
+            sheet_id_from_folder_url = service.get_sheet_id_from_permalink(clean_permalink, all_sheets)
+            if not sheet_id_from_folder_url:
+                #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                log_entry = RowLogEntry(
+                    row_index=index,
+                    row_id=row.id,
+                    folder_url=folder_url,
+                    deletion_date=deletion_date,
+                    em_notification_date=em_notification_date,
+                    deletion_status=deletion_status,
+                    expected_action=expected_action,
+                    automation_action="skipped - could not resolve sheet ID from permalink; likely already deleted workspace",
+                )
+                log_row_entry(log_entry)
+                log_entries.append(log_entry)
+                continue
+            sheet_id_metadata = repository.get_sheet(sheet_id_from_folder_url) if sheet_id_from_folder_url else None
+            workspace = service.find_workspace(workspaces=all_workspaces, id=sheet_id_metadata.workspace.id) if sheet_id_metadata else None
             workspace_id = getattr(workspace, "id", None)
             workspace_permalink = getattr(workspace, "permalink", None)
 
             if workspace_id is not None:
                 workspace_metadata = repository.get_workspace(workspace_id)
                 if workspace_metadata is not None:
-                    expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                    #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
                     log_entry = RowLogEntry(
                         row_index=index,
                         row_id=row.id,
@@ -160,48 +159,25 @@ def verify_deleted_workspaces(
                         automation_action=f"skipped - workspace {workspace_id} still exists",
                     )
                     log_row_entry(log_entry)
-                    summary["skipped"] += 1
+                    log_entries.append(log_entry)
                     continue
 
-            # Workspace appears deleted, update deletion status in the sheet.
-            expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
-            update_success = repository.update_cell(
-                sheet_id=intake_sheet.id,
-                row_id=extracted_data["row_id"],
-                column_id=config.COLUMN_TITLES["deletion_status"],
-                new_value="Deleted",
+            # Workspace appears deleted - no update performed.
+            # expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+            log_entry = RowLogEntry(
+                row_index=index,
+                row_id=row.id,
+                workspace_id=workspace_id,
+                workspace_permalink=workspace_permalink,
+                folder_url=folder_url,
+                deletion_date=deletion_date,
+                em_notification_date=em_notification_date,
+                deletion_status=deletion_status,
+                expected_action=expected_action,
+                automation_action="workspace appears deleted - no update performed",
             )
-
-            if update_success:
-                log_entry = RowLogEntry(
-                    row_index=index,
-                    row_id=row.id,
-                    workspace_id=workspace_id,
-                    workspace_permalink=workspace_permalink,
-                    folder_url=folder_url,
-                    deletion_date=deletion_date,
-                    em_notification_date=em_notification_date,
-                    deletion_status=deletion_status,
-                    expected_action=expected_action,
-                    automation_action="updated deletion status to Deleted",
-                )
-                log_row_entry(log_entry)
-                summary["updated_deleted_status"] += 1
-            else:
-                log_entry = RowLogEntry(
-                    row_index=index,
-                    row_id=row.id,
-                    workspace_id=workspace_id,
-                    workspace_permalink=workspace_permalink,
-                    folder_url=folder_url,
-                    deletion_date=deletion_date,
-                    em_notification_date=em_notification_date,
-                    deletion_status=deletion_status,
-                    expected_action=expected_action,
-                    automation_action="failed to update deletion status",
-                )
-                log_row_entry(log_entry, level="WARNING")
-                summary["skipped"] += 1
+            log_row_entry(log_entry)
+            log_entries.append(log_entry)
 
         except Exception as err:  # Keep processing remaining rows.
             log_entry = RowLogEntry(
@@ -210,16 +186,9 @@ def verify_deleted_workspaces(
                 automation_action=f"error - {str(err)}",
             )
             log_row_entry(log_entry, level="ERROR")
-            summary["errors"].append(
-                {
-                    "row_index": index,
-                    "row_id": getattr(row, "id", None),
-                    "error": str(err),
-                }
-            )
-            summary["skipped"] += 1
+            log_entries.append(log_entry)
 
-    return summary
+    return log_entries
 
 
 def main() -> Dict[str, Any]:
@@ -260,6 +229,7 @@ def main() -> Dict[str, Any]:
     logging.info(f"Using sheet ID: {sheet_id}")
     intake_sheet = repository.get_sheet(int(sheet_id))
     all_workspaces = repository.get_all_workspaces()
+    all_sheets = repository.list_all_sheets()
 
     todays_date = get_pacific_today_date()
     if not todays_date:
@@ -267,33 +237,48 @@ def main() -> Dict[str, Any]:
         logging.error(error_msg)
         return {"error": error_msg, "summary": summary_template, "log_file": log_file}
 
-    summary = verify_deleted_workspaces(
+    log_entries = verify_project_status(
         intake_sheet,
         todays_date,
         repository,
         service,
         all_workspaces,
+        all_sheets
     )
 
-    if "error" in summary:
-        logging.error(summary["error"])
-        summary["log_file"] = log_file
-        return summary
+    total_processed = len(log_entries)
+    appears_deleted = sum(1 for e in log_entries if e.automation_action == "workspace appears deleted - no update performed")
+    skipped = sum(1 for e in log_entries if e.automation_action.startswith("skipped"))
+    errors = sum(1 for e in log_entries if e.automation_action.startswith("error"))
 
     logging.info("=" * 60)
     logging.info("VERIFICATION SUMMARY")
     logging.info("=" * 60)
-    logging.info(f"Total rows processed: {summary['processed_rows']}")
-    logging.info(f"Rows marked Deleted: {summary['updated_deleted_status']}")
-    logging.info(f"Skipped: {summary['skipped']}")
-    logging.info(f"Errors: {len(summary['errors'])}")
+    logging.info(f"Total rows processed: {total_processed}")
+    logging.info(f"Workspace appears deleted: {appears_deleted}")
+    logging.info(f"Skipped: {skipped}")
+    logging.info(f"Errors: {errors}")
     logging.info("=" * 60)
     logging.info(f"Logs saved to: {log_file}")
 
-    summary["log_file"] = log_file
-    return summary
+    entries_file = str(Path(log_file).with_name(Path(log_file).stem + "_entries.log"))
+    if log_entries:
+        with open(entries_file, "w") as f:
+            for entry in log_entries:
+                f.write(json.dumps(entry.to_dict()) + "\n")
+    logging.info(f"Log entries exported to: {entries_file}")
 
+    return {
+        "processed_rows": total_processed,
+        "appears_deleted": appears_deleted,
+        "skipped": skipped,
+        "errors": errors,
+        "log_entries": log_entries,
+        "log_file": log_file,
+        "entries_file": entries_file,
+    }
 
+# You can ignore the tests function - it's just for local testing and debugging, not part of the main workflow.
 def tests():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -330,4 +315,4 @@ def tests():
 
 
 if __name__ == "__main__":
-    tests()
+    main()

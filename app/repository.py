@@ -90,6 +90,45 @@ class SmartsheetRepository:
             logging.error(f"Failed to list workspaces: {e}")
             raise SmartsheetAPIError(f"Failed to list workspaces: {e}")
 
+    def get_all_workspaces(self) -> List[Any]:
+        """
+        Retrieve all workspaces from Smartsheet using token-based pagination.
+
+        Returns:
+            List[Any]: Flat list of all workspace objects available to the user
+
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_workspaces: List[Any] = []
+            last_key: Optional[str] = None
+            max_items = 1000
+            page_count = 0
+
+            while True:
+                response = self.client.Workspaces.list_workspaces(
+                    last_key=last_key,
+                    max_items=max_items,
+                    pagination_type="token",
+                )
+                page_count += 1
+                all_workspaces.extend(response.data)
+
+                logging.info(
+                    f"Retrieved workspace page {page_count} with {len(response.data)} items"
+                )
+
+                last_key = response.last_key
+                if not last_key:
+                    break
+
+            logging.info(f"Retrieved {len(all_workspaces)} total workspaces")
+            return all_workspaces
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to retrieve all workspaces: {e}")
+            raise SmartsheetAPIError(f"Failed to retrieve all workspaces: {e}")
+
     
     def delete_workspace(self, workspace_id: int) -> bool:
         """

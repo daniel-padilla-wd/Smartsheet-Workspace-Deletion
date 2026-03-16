@@ -34,7 +34,7 @@ from utils import (  # noqa: E402
 )
 
 
-@limit_iterable(40)
+@limit_iterable(500)
 def get_rows_for_verification(sheet: Any) -> list[Any]:
     """Return capped rows for safeguard testing runs."""
     return sheet.rows
@@ -77,9 +77,10 @@ def verify_deleted_workspaces(
         logging.error(error_msg)
         return {"error": error_msg, "summary": summary}
     
-    all_workspaces = repository.get_all_workspaces()
+    all_workspaces = repository.list_workspaces()
 
-    rows = get_rows_for_verification(sheet)
+    #rows = get_rows_for_verification(sheet)
+    rows = sheet.rows
     logging.info("Row limit safeguard active: processing up to 20 rows")
     logging.info(f"Processing {len(rows)} rows from sheet {sheet_id}")
 
@@ -151,6 +152,7 @@ def verify_deleted_workspaces(
             clean_permalink = remove_query_string(str(folder_url))
             workspace = service.find_workspace(workspaces=all_workspaces, perma_link=clean_permalink)
             workspace_id = getattr(workspace, "id", None)
+            workspace_permalink = getattr(workspace, "permalink", None)
 
             if workspace_id is not None:
                 workspace_metadata = repository.get_workspace(workspace_id)
@@ -159,6 +161,8 @@ def verify_deleted_workspaces(
                     log_entry = RowLogEntry(
                         row_index=index,
                         row_id=row.id,
+                        workspace_id=workspace_id,
+                        workspace_permalink=workspace_permalink,
                         folder_url=folder_url,
                         deletion_date=deletion_date,
                         em_notification_date=em_notification_date,
@@ -183,6 +187,8 @@ def verify_deleted_workspaces(
                 log_entry = RowLogEntry(
                     row_index=index,
                     row_id=row.id,
+                    workspace_id=workspace_id,
+                    workspace_permalink=workspace_permalink,
                     folder_url=folder_url,
                     deletion_date=deletion_date,
                     em_notification_date=em_notification_date,
@@ -196,6 +202,8 @@ def verify_deleted_workspaces(
                 log_entry = RowLogEntry(
                     row_index=index,
                     row_id=row.id,
+                    workspace_id=workspace_id,
+                    workspace_permalink=workspace_permalink,
                     folder_url=folder_url,
                     deletion_date=deletion_date,
                     em_notification_date=em_notification_date,
@@ -299,17 +307,23 @@ def tests():
         return {"error": error_msg}
 
     repository = SmartsheetRepository(client)
+    service = WorkspaceDeletionService(repository)
 
-    workspaces = repository.get_all_workspaces_as_dicts()
-    if workspaces is None:
-        logging.error("Failed to retrieve workspaces for testing")
-        return {"error": "Failed to retrieve workspaces"} 
-    else:
-        logging.error(f"Here are the workspaces we found: {workspaces}")  
+    all_sheets = repository.list_all_sheets()
+    logging.info(f"Total sheets accessible: {len(all_sheets)}")
+
+    #row_sheet_id = service.find_sheet_by_permalink("https://app.smartsheet.com/sheets/9r3fhQg4wgvjXxVMXpv3fmr2GfVxW924vpwJx7P1")
+    #row_sheet_data = repository.get_sheet(row_sheet_id)
+    #parent_workspace = getattr(row_sheet_data, "workspace")
+    #parent_workspace_id = getattr(parent_workspace, "id")
+    
+    #logging.info(f"Test workspace lookup result: {parent_workspace_id}")
+    #get_wrokspace_result = repository.get_workspace(parent_workspace_id)
+    #logging.info(f"Test get workspace result: {get_wrokspace_result}")
 
 
 
 
 
 if __name__ == "__main__":
-    main()
+    tests()

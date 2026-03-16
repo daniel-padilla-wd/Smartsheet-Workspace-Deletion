@@ -41,18 +41,22 @@ def get_rows_for_verification(sheet: Any) -> list[Any]:
 
 
 def verify_deleted_workspaces(
-    sheet_id: int,
+    intake_sheet: Any,
+    todays_date: str,
     repository: SmartsheetRepository,
     service: WorkspaceDeletionService,
+    all_workspaces: list[Any],
 ) -> Dict[str, Any]:
     """
     Read an intake sheet and mark rows as "Deleted" when workspace permalink
     cannot be resolved.
 
     Args:
-        sheet_id: Smartsheet ID of the intake sheet to process.
+        intake_sheet: Smartsheet sheet object to process.
+        todays_date: Current date in 'YYYY-MM-DD' format.
         repository: Repository instance for Smartsheet API calls.
         service: Service instance containing row parsing and lookup logic.
+        all_workspaces: Pre-fetched workspace objects used for permalink resolution.
 
     Returns:
         Summary dictionary with processing counts and errors.
@@ -63,26 +67,11 @@ def verify_deleted_workspaces(
         "skipped": 0,
         "errors": [],
     }
-
-    try:
-        sheet = repository.get_sheet(sheet_id)
-    except SmartsheetAPIError as err:
-        error_msg = f"Failed to get sheet {sheet_id}: {err}"
-        logging.error(error_msg)
-        return {"error": error_msg, "summary": summary}
-
-    todays_date = get_pacific_today_date()
-    if not todays_date:
-        error_msg = "Failed to get today's date"
-        logging.error(error_msg)
-        return {"error": error_msg, "summary": summary}
     
-    all_workspaces = repository.list_workspaces()
-
-    #rows = get_rows_for_verification(sheet)
-    rows = sheet.rows
+    #rows = get_rows_for_verification(intake_sheet)
+    rows = intake_sheet.rows
     logging.info("Row limit safeguard active: processing up to 20 rows")
-    logging.info(f"Processing {len(rows)} rows from sheet {sheet_id}")
+    logging.info(f"Processing {len(rows)} rows from sheet {intake_sheet.id}")
 
     for index, row in enumerate(rows, start=1):
         try:
@@ -177,7 +166,7 @@ def verify_deleted_workspaces(
             # Workspace appears deleted, update deletion status in the sheet.
             expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
             update_success = repository.update_cell(
-                sheet_id=sheet_id,
+                sheet_id=intake_sheet.id,
                 row_id=extracted_data["row_id"],
                 column_id=config.COLUMN_TITLES["deletion_status"],
                 new_value="Deleted",
@@ -269,7 +258,22 @@ def main() -> Dict[str, Any]:
         "Starting workspace verification workflow (no deletion operations enabled)"
     )
     logging.info(f"Using sheet ID: {sheet_id}")
-    summary = verify_deleted_workspaces(int(sheet_id), repository, service)
+    intake_sheet = repository.get_sheet(int(sheet_id))
+    all_workspaces = repository.get_all_workspaces()
+
+    todays_date = get_pacific_today_date()
+    if not todays_date:
+        error_msg = "Failed to get today's date"
+        logging.error(error_msg)
+        return {"error": error_msg, "summary": summary_template, "log_file": log_file}
+
+    summary = verify_deleted_workspaces(
+        intake_sheet,
+        todays_date,
+        repository,
+        service,
+        all_workspaces,
+    )
 
     if "error" in summary:
         logging.error(summary["error"])

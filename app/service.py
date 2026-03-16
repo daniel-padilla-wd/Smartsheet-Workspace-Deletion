@@ -164,7 +164,24 @@ class WorkspaceDeletionService:
         
         logging.info(f"No sheet found with permalink: {permalink}")
         return None
-    
+
+    def get_sheet_id_from_permalink(self, permalink: str, all_sheets: List[Any]) -> Optional[int]:
+        """
+        Find a sheet ID from a pre-fetched list by exact permalink match.
+
+        Args:
+            permalink: The permalink URL to search for.
+            all_sheets: Pre-fetched list of sheet objects to search through.
+
+        Returns:
+            int or None: The sheet ID if found, None otherwise.
+        """
+        clean_permalink = remove_query_string(permalink)
+        sheet_id = next((item.id for item in all_sheets if item.permalink == clean_permalink), None)
+        if sheet_id is None:
+            logging.info(f"No sheet found with permalink: {clean_permalink}")
+        return sheet_id
+
     def get_parent_workspace_id_from_sheet(self, permalink: str) -> Optional[int]:
         """
         Get the parent workspace ID for a given sheet permalink.

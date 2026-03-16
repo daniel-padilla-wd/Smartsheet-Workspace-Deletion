@@ -326,6 +326,8 @@ class RowLogEntry:
 
     row_index: int
     row_id: Optional[int] = None
+    workspace_id: Optional[int] = None
+    workspace_permalink: Optional[str] = None
     folder_url: Optional[str] = None
     deletion_date: Optional[str] = None
     em_notification_date: Optional[str] = None
@@ -338,6 +340,8 @@ class RowLogEntry:
         return {
             "row_index": self.row_index,
             "row_id": self.row_id or "N/A",
+            "workspace_id": self.workspace_id or "N/A",
+            "workspace_permalink": self.workspace_permalink or "N/A",
             "folder_url": self.folder_url or "N/A",
             "deletion_date": self.deletion_date or "N/A",
             "em_notification_date": self.em_notification_date or "N/A",
@@ -350,6 +354,8 @@ class RowLogEntry:
 def build_row_log_entry(
     row_index: int,
     row_id: Optional[int] = None,
+    workspace_id: Optional[int] = None,
+    workspace_permalink: Optional[str] = None,
     folder_url: Optional[str] = None,
     deletion_date: Optional[str] = None,
     em_notification_date: Optional[str] = None,
@@ -378,6 +384,8 @@ def build_row_log_entry(
     return RowLogEntry(
         row_index=row_index,
         row_id=row_id,
+        workspace_id=workspace_id,
+        workspace_permalink=workspace_permalink,
         folder_url=folder_url,
         deletion_date=deletion_date,
         em_notification_date=em_notification_date,

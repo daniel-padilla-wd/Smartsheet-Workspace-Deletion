@@ -521,10 +521,28 @@ class WorkspaceDeletionService:
                 # Recursively process folder contents
                 #logging.info(f"Getting folder contents for folder {child.id}...")
                 folder_contents = self.repository.get_folder_children(child.id)
-                logging.info(f"Found {len(folder_contents.data)} items in folder {child.id}")
+                folder_children = self._normalize_children(folder_contents)
+                logging.info(f"Found {len(folder_children)} items in folder {child.id}")
                 
                 # Recursive call for folder children
-                self._process_children_recursive(folder_contents.data, summary, parent_type="folder", parent_id=child.id)
+                self._process_children_recursive(folder_children, summary, parent_type="folder", parent_id=child.id)
+
+    def _normalize_children(self, children_response: Any) -> List[Any]:
+        """Return children as a list whether SDK response is list-like or has .data."""
+        if children_response is None:
+            return []
+
+        if isinstance(children_response, list):
+            return children_response
+
+        data = getattr(children_response, "data", None)
+        if isinstance(data, list):
+            return data
+
+        try:
+            return list(children_response)
+        except TypeError:
+            return []
 
 
     def process_workspace_contents(self, workspace_id):
@@ -548,10 +566,11 @@ class WorkspaceDeletionService:
         # Get workspace children
         # logging.info(f"Getting workspace children for workspace {workspace_id}...")
         workspace_children = self.repository.get_workspace_children(workspace_id)
-        logging.info(f"Found {len(workspace_children.data)} children items in workspace {workspace_id}")
+        normalized_workspace_children = self._normalize_children(workspace_children)
+        logging.info(f"Found {len(normalized_workspace_children)} children items in workspace {workspace_id}")
         
         # Process all workspace children
-        self._process_children_recursive(workspace_children.data, summary, parent_type="workspace", parent_id=workspace_id)
+        self._process_children_recursive(normalized_workspace_children, summary, parent_type="workspace", parent_id=workspace_id)
         
         #logging.info(f"Processing complete. Summary: {len(summary['sheets'])} sheets, {len(summary['dashboards'])} dashboards, {len(summary['reports'])} reports, {len(summary['folders'])} folders")
         

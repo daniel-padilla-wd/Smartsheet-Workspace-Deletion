@@ -33,6 +33,7 @@ class Config:
     CLIENT_SECRET: str = os.getenv('S_APP_SECRET', '') if DEV_MODE else os.getenv('APP_SECRET', '')
     REDIRECT_URI: str = os.getenv('REDIRECT_URI', 'http://localhost:8080/callback')
     TOKEN_FILE: str = os.getenv('TOKEN_FILE', 'smartsheet_token.json')
+    PROD_TEST_SHEET: str = os.getenv('PROD_TEST_SHEET', '')
     
     # Smartsheet OAuth Endpoints
     AUTH_BASE: str = 'https://app.smartsheet.com/b/authorize'

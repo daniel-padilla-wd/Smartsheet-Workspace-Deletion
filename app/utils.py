@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from functools import wraps
 from typing import Optional, Dict, Any, Callable, Iterable, TypeVar
 from config import config
+from smartsheet.models.sheet import Sheet as SmartsheetSheet
 
 
 T = TypeVar("T")
@@ -78,6 +79,37 @@ def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
     else:
         #logging.debug(f"'{date_string}' is in the future ({todays_date}). No action.")
         return False
+
+
+def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: str) -> list[Any]:
+    """
+    Return rows whose deletion date is today or in the past.
+
+    Args:
+        intake_sheet_data: Smartsheet sheet object containing rows and cells.
+        todays_date: Today's date in "YYYY-MM-DD" format.
+
+    Returns:
+        list[Any]: Filtered list of Smartsheet row objects.
+    """
+    filtered_rows: list[Any] = []
+    deletion_date_col_id = config.COLUMN_TITLES["deletion_date"]
+
+    for row in getattr(intake_sheet_data, "rows", []):
+        deletion_date = None
+        for cell in getattr(row, "cells", []):
+            if getattr(cell, "column_id", None) == deletion_date_col_id:
+                deletion_date = getattr(cell, "value", None)
+                break
+
+        if not deletion_date:
+            continue
+
+        date_string = str(deletion_date).split("T")[0]
+        if is_date_past_or_today(date_string, todays_date):
+            filtered_rows.append(row)
+
+    return filtered_rows
 
 
 def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, todays_date: str) -> bool:

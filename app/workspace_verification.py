@@ -68,8 +68,10 @@ def verify_project_status(
     
     #rows = get_rows_for_verification(intake_sheet)
     #logging.info(f "Row limit safeguard active: processing up to {LIMIT} rows")
-    rows = intake_sheet.rows
-    logging.info(f"Processing {len(rows)} rows from sheet {intake_sheet.id}")
+    #rows = intake_sheet.rows
+    #logging.info(f"Processing {len(rows)} rows from sheet {intake_sheet.id}")
+
+    rows = intake_sheet
 
     for index, row in enumerate(rows, start=1):
         try:
@@ -92,7 +94,7 @@ def verify_project_status(
             # Checks to determine if we should skip this row for verification
             if not deletion_date or not is_date_past_or_today(deletion_date, todays_date):
                 log_entry = RowLogEntry(
-                    row_index=index,
+                    row_index=getattr(row, "row_number"),
                     row_id=row.id,
                     folder_url=folder_url,
                     deletion_date=deletion_date,
@@ -108,7 +110,7 @@ def verify_project_status(
             if not folder_url:
                 #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
                 log_entry = RowLogEntry(
-                    row_index=index,
+                    row_index=getattr(row, "row_number"),
                     row_id=row.id,
                     folder_url=folder_url,
                     deletion_date=deletion_date,
@@ -128,7 +130,7 @@ def verify_project_status(
                 if "https://app.smartsheet.com/sheets/" not in clean_permalink:
                     logging.warning(f"Row {index}: Folder URL does not appear to be a valid Smartsheet sheet permalink: {folder_url}")
                     log_entry = RowLogEntry(
-                        row_index=index,
+                        row_index=getattr(row, "row_number"),
                         row_id=row.id,
                         folder_url=folder_url,
                         deletion_date=deletion_date,
@@ -142,7 +144,7 @@ def verify_project_status(
                     continue
 
                 log_entry = RowLogEntry(
-                    row_index=index,
+                    row_index=getattr(row, "row_number"),
                     row_id=row.id,
                     folder_url=folder_url,
                     deletion_date=deletion_date,
@@ -164,7 +166,7 @@ def verify_project_status(
                 if workspace_metadata is not None:
                     #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
                     log_entry = RowLogEntry(
-                        row_index=index,
+                        row_index=getattr(row, "row_number"),
                         row_id=row.id,
                         workspace_id=workspace_id,
                         workspace_permalink=workspace_permalink,
@@ -178,7 +180,7 @@ def verify_project_status(
                     log_row_entry(log_entry)
                     log_entries.append(log_entry)
 
-                    if deletion_status is not None and deletion_status.lower() == "deleted":
+                    '''if deletion_status is not None and deletion_status.lower() == "deleted":
                         logging.warning(f"Row {index}: Workspace {workspace_id} still exists but deletion status is marked as 'Deleted' - potential data inconsistency.")
                         try:
                             update_success = repository.update_cell(
@@ -198,13 +200,13 @@ def verify_project_status(
                         except SmartsheetAPIError as update_err:
                             logging.error(
                                 f"Row {index}: Error updating deletion status for row {row.id}: {update_err}"
-                            )
+                            )'''
                     continue
 
             # Workspace appears deleted - no update performed.
             # expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
             log_entry = RowLogEntry(
-                row_index=index,
+                row_index=getattr(row, "row_number"),
                 row_id=row.id,
                 workspace_id=workspace_id,
                 workspace_permalink=workspace_permalink,
@@ -217,7 +219,7 @@ def verify_project_status(
             )
             log_row_entry(log_entry)
             log_entries.append(log_entry)
-
+            '''
             try:
                 update_success = repository.update_cell(
                     sheet_id=intake_sheet.id,
@@ -228,12 +230,12 @@ def verify_project_status(
             except SmartsheetAPIError as update_err:
                 logging.error(
                     f"Row {index}: Error updating deletion status for row {row.id}: {update_err}"
-                )
+                )'''
             
 
         except Exception as err:  # Keep processing remaining rows.
             log_entry = RowLogEntry(
-                row_index=index,
+                row_index=getattr(row, "row_number"),
                 row_id=getattr(row, "id", None),
                 automation_action=f"error - {str(err)}",
             )
@@ -272,14 +274,12 @@ def main() -> Dict[str, Any]:
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
-    # Match app.py behavior for choosing target sheet.
-    sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
+    intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
 
     logging.info(
         "Starting workspace verification workflow (no deletion operations enabled)"
     )
-    logging.info(f"Using sheet ID: {sheet_id}")
-    intake_sheet = repository.get_sheet(int(sheet_id))
+    intake_sheet = repository.get_sheet(int(intake_sheet_id))
     all_workspaces = repository.get_all_workspaces()
     all_sheets = repository.list_all_sheets()
 
@@ -288,9 +288,11 @@ def main() -> Dict[str, Any]:
         error_msg = "Failed to get today's date"
         logging.error(error_msg)
         return {"error": error_msg, "summary": summary_template, "log_file": log_file}
+    
+    filtered_intake_data = filter_intake_data(intake_sheet, todays_date)
 
     log_entries = verify_project_status(
-        intake_sheet,
+        filtered_intake_data,
         todays_date,
         repository,
         service,
@@ -352,11 +354,26 @@ def tests():
 
     intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
+    todays_date = get_pacific_today_date()
+    if not todays_date:
+        error_msg = "Failed to get today's date"
+        logging.error(error_msg)
+        return {"error": error_msg}
+    
+    all_workspaces = repository.get_all_workspaces()
+    all_sheets = repository.list_all_sheets()
 
-    filtered_intake_data = filter_intake_data(intake_sheet, todays_date="2026-03-16")
-    logging.info(f"Total rows after filtering: {len(filtered_intake_data)}")
-    for row_data in filtered_intake_data:
-        logging.info(f"Row ID: {getattr(row_data, 'id')}")
+    filtered_intake_data = filter_intake_data(intake_sheet, todays_date)
+    logging.info(f"Filtered intake data to {len(filtered_intake_data)} rows with deletion date past or today")
+    
+    log_entries = verify_project_status(
+        filtered_intake_data,
+        todays_date,
+        repository,
+        service,
+        all_workspaces,
+        all_sheets
+    )
         
 
 
@@ -364,4 +381,4 @@ def tests():
 
 
 if __name__ == "__main__":
-    tests()
+    main()

@@ -15,6 +15,7 @@ from functools import wraps
 from typing import Optional, Dict, Any, Callable, Iterable, TypeVar
 from config import config
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
+from smartsheet.models.row import Row as SmartsheetRow
 
 
 T = TypeVar("T")
@@ -81,7 +82,7 @@ def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
         return False
 
 
-def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: str) -> list[Any]:
+def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: str) -> list[SmartsheetRow]:
     """
     Return rows whose deletion date is today or in the past.
 
@@ -92,7 +93,7 @@ def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: str) -> 
     Returns:
         list[Any]: Filtered list of Smartsheet row objects.
     """
-    filtered_rows: list[Any] = []
+    filtered_rows: list[SmartsheetRow] = []
     deletion_date_col_id = config.COLUMN_TITLES["deletion_date"]
 
     for row in getattr(intake_sheet_data, "rows", []):

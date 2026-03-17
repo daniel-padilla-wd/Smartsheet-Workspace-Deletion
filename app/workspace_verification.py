@@ -32,6 +32,7 @@ from utils import (  # noqa: E402
     RowLogEntry,
     log_row_entry,
     get_expected_action,
+    filter_intake_data
 )
 
 LIMIT = 500
@@ -124,6 +125,22 @@ def verify_project_status(
             sheet_id_from_folder_url = service.get_sheet_id_from_permalink(clean_permalink, all_sheets)
             if not sheet_id_from_folder_url:
                 #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
+                if "https://app.smartsheet.com/sheets/" not in clean_permalink:
+                    logging.warning(f"Row {index}: Folder URL does not appear to be a valid Smartsheet sheet permalink: {folder_url}")
+                    log_entry = RowLogEntry(
+                        row_index=index,
+                        row_id=row.id,
+                        folder_url=folder_url,
+                        deletion_date=deletion_date,
+                        em_notification_date=em_notification_date,
+                        deletion_status=deletion_status,
+                        expected_action=expected_action,
+                        automation_action="skipped - Unexpeced URL",
+                    )
+                    log_row_entry(log_entry)
+                    log_entries.append(log_entry)
+                    continue
+
                 log_entry = RowLogEntry(
                     row_index=index,
                     row_id=row.id,
@@ -160,6 +177,28 @@ def verify_project_status(
                     )
                     log_row_entry(log_entry)
                     log_entries.append(log_entry)
+
+                    if deletion_status is not None and deletion_status.lower() == "deleted":
+                        logging.warning(f"Row {index}: Workspace {workspace_id} still exists but deletion status is marked as 'Deleted' - potential data inconsistency.")
+                        try:
+                            update_success = repository.update_cell(
+                                sheet_id=intake_sheet.id,
+                                row_id=extracted_data["row_id"],
+                                column_id=config.COLUMN_TITLES["deletion_status"],
+                                new_value="Not Deleted",
+                            )
+                            if update_success:
+                                logging.info(
+                                    f"Row {index}: Updated deletion status to 'Not Deleted' for row {row.id}"
+                                )
+                            else:
+                                logging.warning(
+                                    f"Row {index}: Failed to update deletion status to 'Not Deleted' for row {row.id}"
+                                )
+                        except SmartsheetAPIError as update_err:
+                            logging.error(
+                                f"Row {index}: Error updating deletion status for row {row.id}: {update_err}"
+                            )
                     continue
 
             # Workspace appears deleted - no update performed.
@@ -174,10 +213,23 @@ def verify_project_status(
                 em_notification_date=em_notification_date,
                 deletion_status=deletion_status,
                 expected_action=expected_action,
-                automation_action="workspace appears deleted - no update performed",
+                automation_action="workspace appears deleted",
             )
             log_row_entry(log_entry)
             log_entries.append(log_entry)
+
+            try:
+                update_success = repository.update_cell(
+                    sheet_id=intake_sheet.id,
+                    row_id=extracted_data["row_id"],
+                    column_id=config.COLUMN_TITLES["deletion_status"],
+                    new_value="Deleted",
+                )
+            except SmartsheetAPIError as update_err:
+                logging.error(
+                    f"Row {index}: Error updating deletion status for row {row.id}: {update_err}"
+                )
+            
 
         except Exception as err:  # Keep processing remaining rows.
             log_entry = RowLogEntry(
@@ -298,21 +350,18 @@ def tests():
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
-    all_sheets = repository.list_all_sheets()
-    logging.info(f"Total sheets accessible: {len(all_sheets)}")
+    intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
+    intake_sheet = repository.get_sheet(int(intake_sheet_id))
 
-    #row_sheet_id = service.find_sheet_by_permalink("https://app.smartsheet.com/sheets/9r3fhQg4wgvjXxVMXpv3fmr2GfVxW924vpwJx7P1")
-    #row_sheet_data = repository.get_sheet(row_sheet_id)
-    #parent_workspace = getattr(row_sheet_data, "workspace")
-    #parent_workspace_id = getattr(parent_workspace, "id")
-    
-    #logging.info(f"Test workspace lookup result: {parent_workspace_id}")
-    #get_wrokspace_result = repository.get_workspace(parent_workspace_id)
-    #logging.info(f"Test get workspace result: {get_wrokspace_result}")
+    filtered_intake_data = filter_intake_data(intake_sheet, todays_date="2026-03-16")
+    logging.info(f"Total rows after filtering: {len(filtered_intake_data)}")
+    for row_data in filtered_intake_data:
+        logging.info(f"Row ID: {getattr(row_data, 'id')}")
+        
 
 
 
 
 
 if __name__ == "__main__":
-    main()
+    tests()

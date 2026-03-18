@@ -389,11 +389,48 @@ def create_smartsheet_client(access_token):
     """
     try:
         client = smartsheet.Smartsheet(access_token)
+        logging.info("Created Smartsheet client with access token")
     except TypeError:
+        logging.info("FAILED: Created Smartsheet client with access token")
         client = smartsheet.Smartsheet(access_token=access_token)
 
     client.errors_as_exceptions(True)
     return client
+
+
+def is_auth_error(exception):
+    """
+    Detect if an exception represents an authentication error (401/403).
+    
+    Handles multiple Smartsheet SDK exception structures:
+    - ApiError: exception.error.result.status_code
+    - HttpError: exception.status_code (top-level)
+    
+    Args:
+        exception: A Smartsheet exception or other exception
+        
+    Returns:
+        bool: True if exception is a 401/403 auth error, False otherwise
+    """
+    try:
+        # Handle ApiError: err.error.result.status_code
+        if isinstance(exception, smartsheet_exceptions.ApiError):
+            error_obj = getattr(exception, 'error', None)
+            if error_obj:
+                result = getattr(error_obj, 'result', None)
+                if result:
+                    status_code = getattr(result, 'status_code', None)
+                    if status_code in (401, 403):
+                        return True
+        
+        # Handle HttpError: err.status_code
+        elif isinstance(exception, smartsheet_exceptions.HttpError):
+            if getattr(exception, 'status_code', None) in (401, 403):
+                return True
+    except Exception:
+        pass
+    
+    return False
 
 
 def validate_client(client):
@@ -414,9 +451,9 @@ def validate_client(client):
         client.Users.get_current_user()
         return True
     except smartsheet_exceptions.ApiError as err:
-        status_code = getattr(getattr(err, 'error', None), 'status_code', None)
-        if status_code in (401, 403):
-            logging.info(f"Access token expired or unauthorized (HTTP {status_code})")
+        if is_auth_error(err):
+            logging.info(f"Access token expired or unauthorized (HTTP 401/403)")
+            logging.debug(f"API error details: {err}")
             return False
         logging.warning(
             f"API validation check failed with non-auth API error: {err}. "
@@ -424,7 +461,7 @@ def validate_client(client):
         )
         return True
     except smartsheet_exceptions.HttpError as err:
-        if getattr(err, 'status_code', None) in (401, 403):
+        if is_auth_error(err):
             logging.info(f"Access token expired or unauthorized (HTTP {err.status_code})")
             return False
         logging.warning(

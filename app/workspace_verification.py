@@ -11,6 +11,8 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict
+from smartsheet.models.sheet import Sheet as SmartsheetSheet
+from smartsheet.models.row import Row as SmartsheetRow
 
 
 # Reuse existing app modules that live in ./app with local-style imports.
@@ -32,14 +34,9 @@ from utils import (  # noqa: E402
     RowLogEntry,
     log_row_entry,
     get_expected_action,
-    filter_intake_data
+    filter_intake_data,
+    get_hyperlink_from_row
 )
-
-LIMIT = 500
-@limit_iterable(LIMIT)
-def get_rows_for_verification(sheet: Any) -> list[Any]:
-    """Return capped rows for safeguard testing runs."""
-    return sheet.rows
 
 
 def verify_project_status(
@@ -289,7 +286,7 @@ def main() -> Dict[str, Any]:
         logging.error(error_msg)
         return {"error": error_msg, "summary": summary_template, "log_file": log_file}
     
-    filtered_intake_data = filter_intake_data(intake_sheet, todays_date)
+    filtered_intake_data = filter_intake_data(intake_sheet, todays_date, has_folder_url=True)
 
     log_entries = verify_project_status(
         filtered_intake_data,
@@ -315,7 +312,7 @@ def main() -> Dict[str, Any]:
     logging.info("=" * 60)
     logging.info(f"Logs saved to: {log_file}")
 
-    entries_file = str(Path(log_file).with_name(Path(log_file).stem + "_entries.log"))
+    entries_file = str(Path(log_file).with_name(Path(log_file).stem + "_entries.json"))
     if log_entries:
         with open(entries_file, "w") as f:
             for entry in log_entries:
@@ -359,21 +356,15 @@ def tests():
         error_msg = "Failed to get today's date"
         logging.error(error_msg)
         return {"error": error_msg}
-    
-    all_workspaces = repository.get_all_workspaces()
-    all_sheets = repository.list_all_sheets()
 
-    filtered_intake_data = filter_intake_data(intake_sheet, todays_date)
-    logging.info(f"Filtered intake data to {len(filtered_intake_data)} rows with deletion date past or today")
+    filtered_intake_data = filter_intake_data(intake_sheet, todays_date, has_folder_url=True)
+    logging.info(f"Filtered intake data to {len(filtered_intake_data)} rows with folder URLs and deletion dates in the past or today")
+
+    for row in filtered_intake_data:
+        hyperlink = get_hyperlink_from_row(row)
+        logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Extracted hyperlink: {hyperlink}")  
+
     
-    log_entries = verify_project_status(
-        filtered_intake_data,
-        todays_date,
-        repository,
-        service,
-        all_workspaces,
-        all_sheets
-    )
         
 
 

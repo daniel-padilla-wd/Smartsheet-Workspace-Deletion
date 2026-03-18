@@ -16,11 +16,40 @@ from typing import Optional, Dict, Any, Callable, Iterable, TypeVar
 from config import config
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
 from smartsheet.models.row import Row as SmartsheetRow
+from smartsheet.models.cell import Cell as SmartsheetCell
+
+@dataclass(frozen=True)
+class RowLogEntry:
+    """Structured row-level logging entry used by verification workflows."""
+
+    row_index: int
+    row_id: Optional[int] = None
+    workspace_id: Optional[int] = None
+    workspace_permalink: Optional[str] = None
+    folder_url: Optional[str] = None
+    deletion_date: Optional[str] = None
+    em_notification_date: Optional[str] = None
+    deletion_status: Optional[str] = None
+    expected_action: str = "KEEP_WORKSPACE"
+    automation_action: str = "N/A"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return normalized dictionary representation used by log output."""
+        return {
+            "row_index": self.row_index,
+            "row_id": self.row_id or "N/A",
+            "workspace_id": self.workspace_id or "N/A",
+            "workspace_permalink": self.workspace_permalink or "N/A",
+            "folder_url": self.folder_url or "N/A",
+            "deletion_date": self.deletion_date or "N/A",
+            "em_notification_date": self.em_notification_date or "N/A",
+            "deletion_status": self.deletion_status or "N/A",
+            "expected_action": self.expected_action,
+            "automation_action": self.automation_action,
+        }
 
 
 T = TypeVar("T")
-
-
 def limit_iterable(max_items: int) -> Callable[[Callable[..., Iterable[T]]], Callable[..., list[T]]]:
     """Limit iterable results from a function to the first max_items entries."""
     def decorator(func: Callable[..., Iterable[T]]) -> Callable[..., list[T]]:
@@ -80,35 +109,102 @@ def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
     else:
         #logging.debug(f"'{date_string}' is in the future ({todays_date}). No action.")
         return False
+    
+def foobar_validate_complete_row_values(row:SmartsheetRow) -> bool:
 
-
-def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: str) -> list[SmartsheetRow]:
+    for cell in row.cells:
+        if getattr(cell, "column_id", None) == config.COLUMN_TITLES["deletion_date"]:
+            deletion_date = getattr(cell, "value", None)
+            if not deletion_date:
+                return False
+        elif getattr(cell, "column_id", None) == config.COLUMN_TITLES["em_notification_date"]:
+            em_notification_date = getattr(cell, "value", None)
+            if not em_notification_date:
+                return False
+        elif getattr(cell, "column_id", None) == config.COLUMN_TITLES["folder_url"]:
+            hyperlink = getattr(cell, "hyperlink", None)
+            if not hyperlink or not getattr(hyperlink, "url", None):
+                return False
+    return True
+    
+# Consider changing parameters type to be a list of cells (from the row)
+def get_hyperlink_from_row(row: SmartsheetRow) -> Optional[str]:
     """
-    Return rows whose deletion date is today or in the past.
+    Extract the hyperlink from a Smartsheet row based on the configured column ID.
+
+    Args:
+        row: SmartsheetRow object containing cells with potential hyperlinks.
+    Returns:
+        str or None: The hyperlink value if found, otherwise None.
+    """
+    hyperlink_col_id = config.COLUMN_TITLES["folder_url"]
+    for cell in getattr(row, "cells", []):
+        if getattr(cell, "column_id", None) == hyperlink_col_id:
+            if getattr(cell, "hyperlink", None):
+                cell_hyperlink = getattr(cell, "hyperlink")
+                return getattr(cell_hyperlink, "url", None)
+    return None
+
+def get_hyperlink_from_cell(cells: list[SmartsheetCell]) -> Optional[str]:
+    """
+    Extract the hyperlink from a Smartsheet row based on the configured column ID.
+
+    Args:
+        row: SmartsheetRow object containing cells with potential hyperlinks.
+    Returns:
+        str or None: The hyperlink value if found, otherwise None.
+    """
+    hyperlink_col_id = config.COLUMN_TITLES["folder_url"]
+    for cell in cells:
+        if getattr(cell, "column_id", None) == hyperlink_col_id:
+            if getattr(cell, "hyperlink", None):
+                cell_hyperlink = getattr(cell, "hyperlink")
+                return getattr(cell_hyperlink, "url", None)
+    return None
+
+
+def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: Optional[str] = None, has_folder_url: Optional[bool] = None) -> list[SmartsheetRow]:
+    """
+    Return rows that satisfy one or both optional filters.
 
     Args:
         intake_sheet_data: Smartsheet sheet object containing rows and cells.
-        todays_date: Today's date in "YYYY-MM-DD" format.
+        todays_date: If provided, keep rows whose deletion date is today or in the past.
+        has_folder_url: If provided, keep rows that either have (`True`) or do not have (`False`) a folder URL hyperlink.
 
     Returns:
-        list[Any]: Filtered list of Smartsheet row objects.
+        list[SmartsheetRow]: Filtered list of Smartsheet row objects.
+
+    Raises:
+        ValueError: If both `todays_date` and `has_folder_url` are None.
     """
+    if todays_date is None and has_folder_url is None:
+        raise ValueError("At least one of `todays_date` or `has_folder_url` must be provided")
+
     filtered_rows: list[SmartsheetRow] = []
     deletion_date_col_id = config.COLUMN_TITLES["deletion_date"]
 
     for row in getattr(intake_sheet_data, "rows", []):
-        deletion_date = None
-        for cell in getattr(row, "cells", []):
-            if getattr(cell, "column_id", None) == deletion_date_col_id:
-                deletion_date = getattr(cell, "value", None)
-                break
+        if has_folder_url is not None:
+            row_has_folder_url = bool(get_hyperlink_from_row(row))
+            if row_has_folder_url != has_folder_url:
+                continue
 
-        if not deletion_date:
-            continue
+        if todays_date is not None:
+            deletion_date = None
+            for cell in getattr(row, "cells", []):
+                if getattr(cell, "column_id", None) == deletion_date_col_id:
+                    deletion_date = getattr(cell, "value", None)
+                    break
 
-        date_string = str(deletion_date).split("T")[0]
-        if is_date_past_or_today(date_string, todays_date):
-            filtered_rows.append(row)
+            if not deletion_date:
+                continue
+
+            date_string = str(deletion_date).split("T")[0]
+            if not is_date_past_or_today(date_string, todays_date):
+                continue
+
+        filtered_rows.append(row)
 
     return filtered_rows
 
@@ -268,43 +364,6 @@ def remove_query_string(string: str) -> str:
     return string.split('?')[0]
 
 
-def get_workspace_id_from_csv(folder_url: str, csv_file: str = "intake_sheet_w_workspaces_data.csv") -> Optional[int]:
-    """
-    Look up workspace ID from CSV file by matching folder URL.
-    
-    Args:
-        folder_url: The folder URL to search for
-        csv_file: Path to the CSV file containing workspace data
-        
-    Returns:
-        int or None: The workspace ID if found, None otherwise
-        
-    Raises:
-        FileNotFoundError: If the CSV file doesn't exist
-        Exception: For other CSV reading errors
-    """
-    import pandas as pd
-    
-    try:
-        workspace_df = pd.read_csv(csv_file)
-        matched_row = workspace_df[workspace_df['folder_url_hyperlink'] == folder_url]
-        
-        if matched_row.empty:
-            logging.warning(f"Could not find workspace ID for folder URL: {folder_url}")
-            return None
-        
-        workspace_id = int(matched_row.iloc[0]['workspace_id'])
-        logging.info(f"Found workspace ID {workspace_id} for folder URL: {folder_url}")
-        return workspace_id
-        
-    except FileNotFoundError:
-        logging.error(f"CSV file not found: {csv_file}")
-        raise
-    except Exception as e:
-        logging.error(f"Error reading workspace data from CSV: {e}")
-        raise
-
-
 def setup_file_logging(session_name: str, log_dir: str = "logs") -> str:
     """
     Set up logging to both console and file.
@@ -353,35 +412,6 @@ def setup_file_logging(session_name: str, log_dir: str = "logs") -> str:
     return str(log_file)
 
 
-@dataclass(frozen=True)
-class RowLogEntry:
-    """Structured row-level logging entry used by verification workflows."""
-
-    row_index: int
-    row_id: Optional[int] = None
-    workspace_id: Optional[int] = None
-    workspace_permalink: Optional[str] = None
-    folder_url: Optional[str] = None
-    deletion_date: Optional[str] = None
-    em_notification_date: Optional[str] = None
-    deletion_status: Optional[str] = None
-    expected_action: str = "KEEP_WORKSPACE"
-    automation_action: str = "N/A"
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return normalized dictionary representation used by log output."""
-        return {
-            "row_index": self.row_index,
-            "row_id": self.row_id or "N/A",
-            "workspace_id": self.workspace_id or "N/A",
-            "workspace_permalink": self.workspace_permalink or "N/A",
-            "folder_url": self.folder_url or "N/A",
-            "deletion_date": self.deletion_date or "N/A",
-            "em_notification_date": self.em_notification_date or "N/A",
-            "deletion_status": self.deletion_status or "N/A",
-            "expected_action": self.expected_action,
-            "automation_action": self.automation_action,
-        }
 
 
 def build_row_log_entry(

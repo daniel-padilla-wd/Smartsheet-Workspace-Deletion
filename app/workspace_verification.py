@@ -21,21 +21,24 @@ APP_DIR = ROOT_DIR / "app"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from config import config, ConfigurationError  # noqa: E402
-from oauth_handler import get_smartsheet_client  # noqa: E402
-from repository import SmartsheetRepository, SmartsheetAPIError  # noqa: E402
-from service import WorkspaceDeletionService  # noqa: E402
-from utils import (  # noqa: E402
+from config import config, ConfigurationError  
+from oauth_handler import get_smartsheet_client  
+from repository import SmartsheetRepository, SmartsheetAPIError  
+from service import (
+    WorkspaceDeletionService, 
+    validate_complete_cell_values)
+from utils import ( 
     remove_query_string,
     get_pacific_today_date,
     is_date_past_or_today,
     setup_file_logging,
-    limit_iterable,
     RowLogEntry,
     log_row_entry,
     get_expected_action,
     filter_intake_data,
-    get_hyperlink_from_row
+    get_hyperlink_from_cell,
+    validate_complete_cell_values,
+    return_validated_rows
 )
 
 
@@ -360,9 +363,20 @@ def tests():
     filtered_intake_data = filter_intake_data(intake_sheet, todays_date, has_folder_url=True)
     logging.info(f"Filtered intake data to {len(filtered_intake_data)} rows with folder URLs and deletion dates in the past or today")
 
+    rows_that_passed_checks = []
     for row in filtered_intake_data:
-        hyperlink = get_hyperlink_from_row(row)
-        logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Extracted hyperlink: {hyperlink}")  
+        hyperlink = get_hyperlink_from_cell(row.cells)
+        logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Extracted hyperlink: {hyperlink}") 
+        complete_cell_values = validate_complete_cell_values(row.cells)
+        logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Complete cell values: {complete_cell_values}")
+        if validate_complete_cell_values(row.cells):
+            rows_that_passed_checks.append(row)
+
+    print(f"Total rows that passed validation checks: {len(rows_that_passed_checks)}")
+    print(rows_that_passed_checks)
+
+        
+        
 
     
         
@@ -372,4 +386,4 @@ def tests():
 
 
 if __name__ == "__main__":
-    main()
+    tests()

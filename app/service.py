@@ -17,9 +17,14 @@ from utils import (
     is_workspaces_substring,
     is_pattern_substring,
     remove_query_string,
-    get_workspace_id_from_csv
+    validate_complete_cell_values,
+    return_validated_rows,
+    RowLogEntry
 )
 from config import config
+from smartsheet.models.sheet import Sheet as SmartsheetSheet
+from smartsheet.models.row import Row as SmartsheetRow
+from smartsheet.models.cell import Cell as SmartsheetCell
 
 
 class WorkspaceDeletionError(Exception):
@@ -43,8 +48,6 @@ class WorkspaceDeletionService:
             repository: SmartsheetRepository instance for data access
         """
         self.repository = repository
-
-    
     
     def find_workspace_by_permalink(self, permalink: str) -> Optional[int]:
         """
@@ -81,6 +84,7 @@ class WorkspaceDeletionService:
         logging.info(f"No workspace found with permalink: {permalink}")
         return None
 
+    # Move to utils.py
     def find_workspace(
         self,
         workspaces: List[Any],
@@ -164,7 +168,8 @@ class WorkspaceDeletionService:
         
         logging.info(f"No sheet found with permalink: {permalink}")
         return None
-
+    
+    # Move to utils.py
     def get_sheet_id_from_permalink(self, permalink: str, all_sheets: List[Any]) -> Optional[int]:
         """
         Find a sheet ID from a pre-fetched list by exact permalink match.
@@ -219,7 +224,63 @@ class WorkspaceDeletionService:
         except Exception as e:
             logging.error(f"Failed to get parent workspace ID from sheet permalink: {permalink}. Error: {e}")
             return None
+        
+    def process_row_for_checks(self, row: SmartsheetRow) -> RowLogEntry:
+        """
+        Process a single row to determine if it meets criteria for workspace deletion.
+        This method extracts necessary data from the row and validates required fields.
+        Args:
+            row: SmartsheetRow object to process
+        Returns:
+            RowLogEntry containing extracted data and validation results
+        """
 
+        if not validate_complete_cell_values(row.cells):
+            logging.warning(f"Row {row.id} failed validation checks, skipping: {row.cells}")
+            return RowLogEntry(
+                    row_index=getattr(row, "row_number"),
+                    row_id=getattr(row, "id"),
+                    automation_action="skipped - missing required fields: folder_url, deletion_date, or em_notification_date",
+                )
+        
+        extracted_row_data = self.extract_row_data_with_column_ids(
+            row, 
+            config.COLUMN_TITLES["folder_url"],
+            config.COLUMN_TITLES["deletion_date"],
+            config.COLUMN_TITLES["em_notification_date"],
+            config.COLUMN_TITLES["deletion_status"]
+            )
+        return RowLogEntry(
+            row_index=getattr(row, "row_number"),
+            row_id=getattr(row, "id"),
+            folder_url=extracted_row_data.get("folder_url"),
+            deletion_date=extracted_row_data.get("deletion_date"),
+            em_notification_date=extracted_row_data.get("em_notification_date"),
+            deletion_status=extracted_row_data.get("deletion_status"),
+        )
+    
+    # Not sure if this function is being used anywhere else
+    def extract_row_data(self, row: SmartsheetRow) -> Dict[str, Any]:
+        """
+        Extract relevant data from a sheet row.
+        
+        Args:
+            row: The row object from Smartsheet
+            column_ids: Dictionary mapping logical names to column IDs
+            
+        Returns:
+            Dict containing extracted row data
+        """
+        extracted_data = {}
+        column_ids = config.COLUMN_TITLES
+        
+        for cell in row.cells:
+            if (cell.column_id in column_ids.values()) and cell.value is not None:
+                key = get_key_from_value(column_ids, cell.column_id)
+                if key:
+                    extracted_data[key] = cell.to_dict()
+        
+        return extracted_data
     
     def extract_row_data_with_column_ids(
         self, 
@@ -338,13 +399,13 @@ class WorkspaceDeletionService:
                     summary["skipped"] += 1
                     continue
 
-                workspace_id = get_workspace_id_from_csv(folder_url)
+                workspace_id = "get_workspace_id_from_csv(folder_url)"
                 if workspace_id is None:
                     logging.info(f"Workspace already deleted or not found for folder URL: {folder_url}, skipping")
                     summary["skipped"] += 1
                     continue
 
-                workspace_metadata = self.repository.get_workspace(workspace_id)
+                workspace_metadata = "self.repository.get_workspace(workspace_id)"
                 if workspace_metadata is None:
                     logging.info(f"Workspace metadata not found for workspace ID: {workspace_id}, assuming already deleted")
                     summary["skipped"] += 1
@@ -385,7 +446,7 @@ class WorkspaceDeletionService:
                 
                 # Get workspace ID from CSV lookup
                 try:
-                    workspace_id = get_workspace_id_from_csv(folder_url)
+                    workspace_id = "get_workspace_id_from_csv(folder_url)"
                     if workspace_id is None:
                         logging.error(f"Could not find workspace ID for folder URL: {folder_url}")
                         summary["errors"].append({
@@ -431,7 +492,7 @@ class WorkspaceDeletionService:
                 # Delete workspace
                 logging.info(f"Deleting workspace ID: {workspace_id}")
                 try:
-                    deletion_success = self.repository.delete_workspace(workspace_id)
+                    deletion_success = "self.repository.delete_workspace(workspace_id)"
                     if not deletion_success:
                         logging.error(f"Failed to delete workspace ID: {workspace_id}")
                         summary["errors"].append({
@@ -482,27 +543,7 @@ class WorkspaceDeletionService:
         
         logging.info(f"Processing complete. Summary: {summary}")
         return summary
-    
-    def extract_row_data(self, row: Any, column_ids: Dict[str, int]) -> Dict[str, Any]:
-        """
-        Extract relevant data from a sheet row.
-        
-        Args:
-            row: The row object from Smartsheet
-            column_ids: Dictionary mapping logical names to column IDs
-            
-        Returns:
-            Dict containing extracted row data
-        """
-        extracted_data = {"row_id": row.id}
-        
-        for cell in row.cells:
-            if (cell.column_id in column_ids.values()) and cell.value is not None:
-                key = get_key_from_value(column_ids, cell.column_id)
-                if key:
-                    extracted_data[key] = cell.to_dict()
-        
-        return extracted_data
+
     
     
     def _process_children_recursive(self, children, summary, parent_type="workspace", parent_id=None):

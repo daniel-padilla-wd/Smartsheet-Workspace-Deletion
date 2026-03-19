@@ -110,40 +110,30 @@ def is_date_past_or_today(date_string: str, todays_date: str) -> bool:
         #logging.debug(f"'{date_string}' is in the future ({todays_date}). No action.")
         return False
     
-def foobar_validate_complete_row_values(row:SmartsheetRow) -> bool:
-
-    for cell in row.cells:
+def validate_complete_cell_values(cells: list[SmartsheetCell]) -> bool:
+    """
+    Validates that a Smartsheet row has complete values for deletion date, EM notification date, and folder URL hyperlink.
+     Args:
+        row: SmartsheetRow object to validate.
+    Returns:
+        bool: True if all required values are present, False if any are missing.
+    """
+    for cell in cells:
         if getattr(cell, "column_id", None) == config.COLUMN_TITLES["deletion_date"]:
             deletion_date = getattr(cell, "value", None)
+            logging.info(f"Validating deletion date cell: {deletion_date}")
             if not deletion_date:
                 return False
         elif getattr(cell, "column_id", None) == config.COLUMN_TITLES["em_notification_date"]:
             em_notification_date = getattr(cell, "value", None)
+            logging.info(f"Validating EM notification date cell: {em_notification_date}")
             if not em_notification_date:
                 return False
-        elif getattr(cell, "column_id", None) == config.COLUMN_TITLES["folder_url"]:
-            hyperlink = getattr(cell, "hyperlink", None)
-            if not hyperlink or not getattr(hyperlink, "url", None):
-                return False
-    return True
-    
-# Consider changing parameters type to be a list of cells (from the row)
-def get_hyperlink_from_row(row: SmartsheetRow) -> Optional[str]:
-    """
-    Extract the hyperlink from a Smartsheet row based on the configured column ID.
+            
+    if not get_hyperlink_from_cell(cells):
+        return False
 
-    Args:
-        row: SmartsheetRow object containing cells with potential hyperlinks.
-    Returns:
-        str or None: The hyperlink value if found, otherwise None.
-    """
-    hyperlink_col_id = config.COLUMN_TITLES["folder_url"]
-    for cell in getattr(row, "cells", []):
-        if getattr(cell, "column_id", None) == hyperlink_col_id:
-            if getattr(cell, "hyperlink", None):
-                cell_hyperlink = getattr(cell, "hyperlink")
-                return getattr(cell_hyperlink, "url", None)
-    return None
+    return True
 
 def get_hyperlink_from_cell(cells: list[SmartsheetCell]) -> Optional[str]:
     """
@@ -186,7 +176,7 @@ def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: Optional
 
     for row in getattr(intake_sheet_data, "rows", []):
         if has_folder_url is not None:
-            row_has_folder_url = bool(get_hyperlink_from_row(row))
+            row_has_folder_url = bool(get_hyperlink_from_cell(row.cells))
             if row_has_folder_url != has_folder_url:
                 continue
 
@@ -207,6 +197,23 @@ def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: Optional
         filtered_rows.append(row)
 
     return filtered_rows
+
+
+def return_validated_rows(row: SmartsheetRow) -> list[SmartsheetRow]:
+    """
+    Process a Smartsheet row to determine if it passes validation checks.
+
+    Args:
+        row: A SmartsheetRow object to be processed.
+
+    Return:    
+        list[SmartsheetRow]: A list containing the row if it passes validation, or an empty list if it fails.
+    """
+    rows_that_pass_validation = []
+    if validate_complete_cell_values(row.cells):
+        rows_that_pass_validation.append(row)
+    print(f"Here are the rows that passed validation: {rows_that_pass_validation}")
+    return rows_that_pass_validation
 
 
 def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, todays_date: str) -> bool:

@@ -25,8 +25,9 @@ from config import config, ConfigurationError
 from oauth_handler import get_smartsheet_client  
 from repository import SmartsheetRepository, SmartsheetAPIError  
 from service import (
-    WorkspaceDeletionService, 
-    validate_complete_cell_values)
+    WorkspaceDeletionService
+    
+    )
 from utils import ( 
     remove_query_string,
     get_pacific_today_date,
@@ -40,6 +41,90 @@ from utils import (
     validate_complete_cell_values,
     return_validated_rows
 )
+
+def _verify_project_status(
+    smartsheet_rows_list: list[SmartsheetRow],
+    todays_date: str,
+    service: WorkspaceDeletionService,
+    all_sheets: list[Any],
+) -> list[RowLogEntry]:
+    """
+    Read an intake sheet and collect a RowLogEntry for each row, noting whether
+    the workspace appears to already be deleted.
+
+    Args:
+        intake_sheet: Smartsheet sheet object to process.
+        todays_date: Current date in 'YYYY-MM-DD' format.
+        repository: Repository instance for Smartsheet API calls.
+        service: Service instance containing row parsing and lookup logic.
+        all_workspaces: Pre-fetched workspace objects used for permalink resolution.
+
+    Returns:
+        List of RowLogEntry objects, one per processed row.
+    """
+    log_entries: list[RowLogEntry] = []
+
+    for index, smartsheet_row in enumerate(smartsheet_rows_list, start=1):
+        try:
+            try:
+                extracted_row_data = service.extract_row_data(smartsheet_row)
+                row_entry = service.process_row_for_checks(smartsheet_row, extracted_row_data, all_sheets)
+                if row_entry.automation_action.startswith("SKIPPED"):
+                    log_row_entry(row_entry)
+                    log_entries.append(row_entry)
+                    continue
+            except Exception as err:
+                logging.error(f"Row {getattr(smartsheet_row, 'row_number', 'N/A')}: Error extracting row data or performing initial checks: {err}")
+                continue
+
+            try:
+                workspace_id_resolution = service.process_workspace_id_resolution(smartsheet_row, extracted_row_data, all_sheets)
+                if workspace_id_resolution.automation_action.startswith("SKIPPED"):
+                    log_row_entry(workspace_id_resolution)
+                    log_entries.append(workspace_id_resolution)
+                    continue
+            except Exception as err:
+                logging.error(f"Row {getattr(smartsheet_row, 'row_number', 'N/A')}: Error during workspace ID resolution: {err}")
+                continue
+
+            try:
+                workspace_id = workspace_id_resolution.workspace_id
+                workspace_exists = service.process_workspace_existence(smartsheet_row, workspace_id)
+                if workspace_exists.automation_action.startswith("SKIPPED"):
+                    log_row_entry(workspace_exists)
+                    log_entries.append(workspace_exists)
+                    continue
+            except Exception as err:
+                logging.error(f"Row {getattr(smartsheet_row, 'row_number', 'N/A')}: Error during workspace existence check: {err}")
+                continue
+            try: 
+                expected_action = get_expected_action(extracted_row_data["deletion_date"], extracted_row_data["em_notification_date"], todays_date)
+                log_entry = RowLogEntry(
+                    row_index=getattr(smartsheet_row, "row_number"),
+                    row_id=getattr(smartsheet_row, "id"),
+                    workspace_id=workspace_id,
+                    workspace_permalink=workspace_exists.workspace_permalink,
+                    folder_url=extracted_row_data.get("folder_url"),
+                    deletion_date=extracted_row_data.get("deletion_date"),
+                    em_notification_date=extracted_row_data.get("em_notification_date"),
+                    deletion_status=extracted_row_data.get("deletion_status"),
+                    expected_action=expected_action,
+                    automation_action=f"CONTINUE",
+                )
+                log_row_entry(log_entry)
+                log_entries.append(log_entry)
+            except Exception as err:
+                logging.error(f"Row {getattr(smartsheet_row, 'row_number', 'N/A')}: Error determining expected action or logging: {err}")
+        except Exception as err:  
+            log_entry = RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id", None),
+                automation_action=f"error - {str(err)}",
+            )
+            log_row_entry(log_entry, level="ERROR")
+            log_entries.append(log_entry)
+
+    return log_entries
 
 
 def verify_project_status(
@@ -128,7 +213,7 @@ def verify_project_status(
             if not sheet_id_from_folder_url:
                 #expected_action = get_expected_action(deletion_date, em_notification_date, todays_date)
                 if "https://app.smartsheet.com/sheets/" not in clean_permalink:
-                    logging.warning(f"Row {index}: Folder URL does not appear to be a valid Smartsheet sheet permalink: {folder_url}")
+                    logging.warning(f"Row {row.row_number}: Folder URL does not appear to be a valid Smartsheet sheet permalink: {folder_url}")
                     log_entry = RowLogEntry(
                         row_index=getattr(row, "row_number"),
                         row_id=row.id,
@@ -280,7 +365,7 @@ def main() -> Dict[str, Any]:
         "Starting workspace verification workflow (no deletion operations enabled)"
     )
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
-    all_workspaces = repository.get_all_workspaces()
+    # all_workspaces = repository.get_all_workspaces()
     all_sheets = repository.list_all_sheets()
 
     todays_date = get_pacific_today_date()
@@ -291,25 +376,25 @@ def main() -> Dict[str, Any]:
     
     filtered_intake_data = filter_intake_data(intake_sheet, todays_date, has_folder_url=True)
 
-    log_entries = verify_project_status(
+    log_entries = _verify_project_status(
         filtered_intake_data,
         todays_date,
-        repository,
         service,
-        all_workspaces,
         all_sheets
     )
 
     total_processed = len(log_entries)
-    appears_deleted = sum(1 for e in log_entries if e.automation_action == "workspace appears deleted - no update performed")
-    skipped = sum(1 for e in log_entries if e.automation_action.startswith("skipped"))
+    appears_deleted = sum(1 for e in log_entries if not e.workspace_id)
+    skipped = sum(1 for e in log_entries if e.automation_action.startswith("SKIPPED"))
     errors = sum(1 for e in log_entries if e.automation_action.startswith("error"))
+    next_phase = sum(1 for e in log_entries if e.automation_action == "CONTINUE")  
 
     logging.info("=" * 60)
     logging.info("VERIFICATION SUMMARY")
     logging.info("=" * 60)
     logging.info(f"Total rows processed: {total_processed}")
     logging.info(f"Workspace appears deleted: {appears_deleted}")
+    logging.info(f"Workspace still exists: {total_processed - appears_deleted - skipped - errors}")
     logging.info(f"Skipped: {skipped}")
     logging.info(f"Errors: {errors}")
     logging.info("=" * 60)
@@ -352,6 +437,8 @@ def tests():
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
+    all_sheets = repository.list_all_sheets()
+
     intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
     todays_date = get_pacific_today_date()
@@ -366,24 +453,21 @@ def tests():
     rows_that_passed_checks = []
     for row in filtered_intake_data:
         hyperlink = get_hyperlink_from_cell(row.cells)
-        logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Extracted hyperlink: {hyperlink}") 
+        #logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Extracted hyperlink: {hyperlink}") 
         complete_cell_values = validate_complete_cell_values(row.cells)
-        logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Complete cell values: {complete_cell_values}")
+        #logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Complete cell values: {complete_cell_values}")
         if validate_complete_cell_values(row.cells):
             rows_that_passed_checks.append(row)
+    logging.info(f"{len(rows_that_passed_checks)} rows passed initial checks for folder URL and deletion date")
 
-    print(f"Total rows that passed validation checks: {len(rows_that_passed_checks)}")
-    print(rows_that_passed_checks)
+    log_entries = _verify_project_status(
+        filtered_intake_data,
+        todays_date,
+        service,
+        all_sheets
+    )
 
+    print(f"Total log entries: {len(log_entries)}")
         
-        
-
-    
-        
-
-
-
-
-
 if __name__ == "__main__":
-    tests()
+    main()

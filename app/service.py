@@ -19,6 +19,8 @@ from utils import (
     remove_query_string,
     validate_complete_cell_values,
     return_validated_rows,
+    get_expected_action,
+    remove_query_string,
     RowLogEntry
 )
 from config import config
@@ -49,41 +51,6 @@ class WorkspaceDeletionService:
         """
         self.repository = repository
     
-    def find_workspace_by_permalink(self, permalink: str) -> Optional[int]:
-        """
-        Find a workspace ID by matching its permalink pattern.
-        
-        This is business logic that uses the repository to get data
-        and applies filtering logic.
-        
-        Args:
-            permalink: The permalink URL to search for
-            
-        Returns:
-            int or None: The workspace ID if found, None otherwise
-        """
-        # logging.info(f"Searching for workspace with permalink: {permalink}")
-        
-        try:
-            workspaces = self.repository.list_workspaces()
-        except SmartsheetAPIError as e:
-            logging.error(f"Failed to list workspaces: {e}")
-            return None
-        
-        for workspace in workspaces:
-            workspace_info = {
-                "id": workspace.id,
-                "name": workspace.name,
-                "permalink": workspace.permalink
-            }
-            
-            if is_workspaces_substring(permalink, workspace.permalink):
-                logging.info(f"Found matching workspace: {workspace_info}")
-                return workspace.id
-        
-        logging.info(f"No workspace found with permalink: {permalink}")
-        return None
-
     # Move to utils.py
     def find_workspace(
         self,
@@ -134,6 +101,172 @@ class WorkspaceDeletionService:
             return workspace
         return None
     
+    def extract_row_data(self, row: SmartsheetRow) -> Dict[str, str]:
+        """
+        Extract relevant data from a sheet row.
+        
+        Args:
+            row: The row object from Smartsheet
+            column_ids: Dictionary mapping logical names to column IDs
+            
+        Returns:
+            Dict containing extracted row data
+        """
+        extracted_data = {}
+        target_columns = config.COLUMN_TITLES
+        target_columns_ids = target_columns.values()
+        
+        for cell in row.cells:
+            if (cell.column_id in target_columns_ids):
+                if cell.column_id == target_columns["folder_url"]:
+                    extracted_data.update({"folder_url": cell.hyperlink.url})
+                    continue
+                key = get_key_from_value(target_columns, cell.column_id)
+                if key:
+                    extracted_data.update({key: cell.value})
+        
+        return extracted_data
+    
+    # Move to utils.py
+    def get_sheet_id_from_permalink(self, permalink: str, all_sheets: List[Any]) -> int:
+        """
+        Find a sheet ID from a pre-fetched list by exact permalink match.
+
+        Args:
+            permalink: The permalink URL to search for.
+            all_sheets: Pre-fetched list of sheet objects to search through.
+
+        Returns:
+            int or None: The sheet ID if found, None otherwise.
+        """
+        clean_permalink = remove_query_string(permalink)
+        sheet_id = next((item.id for item in all_sheets if item.permalink == clean_permalink), None)
+        if sheet_id is None:
+            logging.warning(f"No sheet found with permalink: {clean_permalink}")
+            return 0
+        return sheet_id
+
+    def process_row_for_checks(self, smartsheet_row: SmartsheetRow, extracted_row_data: dict[str,str], all_sheets) -> RowLogEntry:
+        """
+        Process a single row to determine if it meets criteria for workspace deletion.
+        This method extracts necessary data from the row and validates required fields.
+        Args:
+            row: SmartsheetRow object to process
+        Returns:
+            RowLogEntry containing extracted data and validation results
+        """
+
+        if not validate_complete_cell_values(smartsheet_row.cells):
+            logging.warning(f"Row {smartsheet_row.id} failed validation checks, skipping: {smartsheet_row.cells}")
+            return RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id"),
+                folder_url=extracted_row_data.get("folder_url"),
+                deletion_date=extracted_row_data.get("deletion_date"),
+                em_notification_date=extracted_row_data.get("em_notification_date"),
+                deletion_status=extracted_row_data.get("deletion_status"),
+                automation_action="SKIPPED - missing required fields: folder_url, deletion_date, or em_notification_date",
+            )
+        
+        if extracted_row_data.get("deletion_status") == "Deleted":
+            logging.warning(f"Row {smartsheet_row.row_number} already marked as 'Deleted', skipping")
+            return RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id"),
+                folder_url=extracted_row_data.get("folder_url"),
+                deletion_date=extracted_row_data.get("deletion_date"),
+                em_notification_date=extracted_row_data.get("em_notification_date"),
+                deletion_status=extracted_row_data.get("deletion_status"),
+                automation_action="SKIPPED - workspace already appears deleted based on deletion_status column"
+            )
+        
+        folder_url = str(extracted_row_data.get("folder_url"))
+        clean_permalink = remove_query_string(folder_url)
+        if "https://app.smartsheet.com/sheets/" not in clean_permalink:
+            logging.warning(f"Row {smartsheet_row.row_number}: Folder URL does not appear to be a valid Smartsheet sheet permalink: {folder_url}")
+            return RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id"),
+                folder_url=clean_permalink,
+                deletion_date=extracted_row_data.get("deletion_date"),
+                em_notification_date=extracted_row_data.get("em_notification_date"),
+                deletion_status=extracted_row_data.get("deletion_status"),
+                automation_action="SKIPPED - invalid sheet URL format"
+            )
+        
+        found_sheet_id = self.get_sheet_id_from_permalink(clean_permalink, all_sheets)
+        if not found_sheet_id:
+            logging.warning(f"Row {smartsheet_row.row_number}: No sheet found with permalink: {clean_permalink}")
+            return RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id"),
+                folder_url=clean_permalink,
+                deletion_date=extracted_row_data.get("deletion_date"),
+                em_notification_date=extracted_row_data.get("em_notification_date"),
+                deletion_status=extracted_row_data.get("deletion_status"),
+                automation_action="SKIPPED - no matching sheet found from folder URL; sheet DNE and corresponding workspace may have already been deleted"
+            )
+
+        return RowLogEntry(
+            row_index=getattr(smartsheet_row, "row_number"),
+            row_id=getattr(smartsheet_row, "id"),
+            automation_action="CONTINUE"
+        )
+    
+    def process_workspace_existence(self, smartsheet_row: SmartsheetRow, workspace_id:int) -> RowLogEntry:
+        workspace = self.repository.get_workspace(workspace_id)
+        if not workspace:
+            return RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id"),
+                workspace_id=workspace_id,
+                automation_action="SKIPPED - could not resolve workspace ID or permalink from sheet data"
+            )
+        return RowLogEntry(
+            row_index=getattr(smartsheet_row, "row_number"),
+            row_id=getattr(smartsheet_row, "id"),
+            workspace_id=workspace_id,
+            workspace_permalink=workspace.permalink,
+            automation_action="CONTINUE"
+        )
+    
+    def process_workspace_id_resolution(self, smartsheet_row: SmartsheetRow, extracted_row_data: dict[str,str], all_sheets) -> RowLogEntry:
+        clean_permalink: str = remove_query_string(extracted_row_data["folder_url"])
+        sheet_id: int = self.get_sheet_id_from_permalink(clean_permalink, all_sheets)
+        sheet: SmartsheetSheet = self.repository.get_sheet(sheet_id)
+        workspace_id: int = getattr(sheet.workspace, "id", 0)
+        workspace_permalink: str = getattr(sheet.workspace, "permalink", "")
+        if not workspace_id:
+            logging.warning(f"Row {smartsheet_row.row_number}: No workspace ID for corresponding sheet.")
+            return RowLogEntry(
+                row_index=getattr(smartsheet_row, "row_number"),
+                row_id=getattr(smartsheet_row, "id"),
+                workspace_id=workspace_id,
+                workspace_permalink=workspace_permalink,
+                folder_url=clean_permalink,
+                deletion_date=extracted_row_data.get("deletion_date"),
+                em_notification_date=extracted_row_data.get("em_notification_date"),
+                deletion_status=extracted_row_data.get("deletion_status"),
+                automation_action="SKIPPED - could not resolve workspace ID or permalink from sheet data"
+            )
+        return RowLogEntry(
+            row_index=getattr(smartsheet_row, "row_number"),
+            row_id=getattr(smartsheet_row, "id"),
+            workspace_id=workspace_id,
+            workspace_permalink=workspace_permalink,
+            folder_url=clean_permalink,
+            deletion_date=extracted_row_data.get("deletion_date"),
+            em_notification_date=extracted_row_data.get("em_notification_date"),
+            deletion_status=extracted_row_data.get("deletion_status"),
+            automation_action="CONTINUE"
+        )
+
+    '''
+    #######################################
+    All legacy methods listed below. 
+    #######################################
+    '''
+    # Legacy
     def find_sheet_by_permalink(self, permalink: str) -> Optional[int]:
         """
         Find a sheet ID by matching its permalink pattern.
@@ -169,23 +302,41 @@ class WorkspaceDeletionService:
         logging.info(f"No sheet found with permalink: {permalink}")
         return None
     
-    # Move to utils.py
-    def get_sheet_id_from_permalink(self, permalink: str, all_sheets: List[Any]) -> Optional[int]:
+    # legacy
+    def find_workspace_by_permalink(self, permalink: str) -> Optional[int]:
         """
-        Find a sheet ID from a pre-fetched list by exact permalink match.
-
+        Find a workspace ID by matching its permalink pattern.
+        
+        This is business logic that uses the repository to get data
+        and applies filtering logic.
+        
         Args:
-            permalink: The permalink URL to search for.
-            all_sheets: Pre-fetched list of sheet objects to search through.
-
+            permalink: The permalink URL to search for
+            
         Returns:
-            int or None: The sheet ID if found, None otherwise.
+            int or None: The workspace ID if found, None otherwise
         """
-        clean_permalink = remove_query_string(permalink)
-        sheet_id = next((item.id for item in all_sheets if item.permalink == clean_permalink), None)
-        if sheet_id is None:
-            logging.info(f"No sheet found with permalink: {clean_permalink}")
-        return sheet_id
+        # logging.info(f"Searching for workspace with permalink: {permalink}")
+        
+        try:
+            workspaces = self.repository.list_workspaces()
+        except SmartsheetAPIError as e:
+            logging.error(f"Failed to list workspaces: {e}")
+            return None
+        
+        for workspace in workspaces:
+            workspace_info = {
+                "id": workspace.id,
+                "name": workspace.name,
+                "permalink": workspace.permalink
+            }
+            
+            if is_workspaces_substring(permalink, workspace.permalink):
+                logging.info(f"Found matching workspace: {workspace_info}")
+                return workspace.id
+        
+        logging.info(f"No workspace found with permalink: {permalink}")
+        return None
 
     def get_parent_workspace_id_from_sheet(self, permalink: str) -> Optional[int]:
         """
@@ -224,63 +375,6 @@ class WorkspaceDeletionService:
         except Exception as e:
             logging.error(f"Failed to get parent workspace ID from sheet permalink: {permalink}. Error: {e}")
             return None
-        
-    def process_row_for_checks(self, row: SmartsheetRow) -> RowLogEntry:
-        """
-        Process a single row to determine if it meets criteria for workspace deletion.
-        This method extracts necessary data from the row and validates required fields.
-        Args:
-            row: SmartsheetRow object to process
-        Returns:
-            RowLogEntry containing extracted data and validation results
-        """
-
-        if not validate_complete_cell_values(row.cells):
-            logging.warning(f"Row {row.id} failed validation checks, skipping: {row.cells}")
-            return RowLogEntry(
-                    row_index=getattr(row, "row_number"),
-                    row_id=getattr(row, "id"),
-                    automation_action="skipped - missing required fields: folder_url, deletion_date, or em_notification_date",
-                )
-        
-        extracted_row_data = self.extract_row_data_with_column_ids(
-            row, 
-            config.COLUMN_TITLES["folder_url"],
-            config.COLUMN_TITLES["deletion_date"],
-            config.COLUMN_TITLES["em_notification_date"],
-            config.COLUMN_TITLES["deletion_status"]
-            )
-        return RowLogEntry(
-            row_index=getattr(row, "row_number"),
-            row_id=getattr(row, "id"),
-            folder_url=extracted_row_data.get("folder_url"),
-            deletion_date=extracted_row_data.get("deletion_date"),
-            em_notification_date=extracted_row_data.get("em_notification_date"),
-            deletion_status=extracted_row_data.get("deletion_status"),
-        )
-    
-    # Not sure if this function is being used anywhere else
-    def extract_row_data(self, row: SmartsheetRow) -> Dict[str, Any]:
-        """
-        Extract relevant data from a sheet row.
-        
-        Args:
-            row: The row object from Smartsheet
-            column_ids: Dictionary mapping logical names to column IDs
-            
-        Returns:
-            Dict containing extracted row data
-        """
-        extracted_data = {}
-        column_ids = config.COLUMN_TITLES
-        
-        for cell in row.cells:
-            if (cell.column_id in column_ids.values()) and cell.value is not None:
-                key = get_key_from_value(column_ids, cell.column_id)
-                if key:
-                    extracted_data[key] = cell.to_dict()
-        
-        return extracted_data
     
     def extract_row_data_with_column_ids(
         self, 
@@ -317,7 +411,7 @@ class WorkspaceDeletionService:
         for cell in row.cells:
             if cell.column_id in target_column_ids:
                 if cell.column_id == folder_url_col_id:
-                    extracted_data["folder_url"] = cell.hyperlink.url if cell.hyperlink else cell.value
+                    extracted_data["folder_url"] = cell.hyperlink.url
                 elif cell.column_id == deletion_date_col_id:
                     extracted_data["deletion_date"] = cell.value
                 elif cell.column_id == em_notification_col_id:

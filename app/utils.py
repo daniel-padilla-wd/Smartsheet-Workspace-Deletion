@@ -30,7 +30,7 @@ class RowLogEntry:
     deletion_date: Optional[str] = None
     em_notification_date: Optional[str] = None
     deletion_status: Optional[str] = None
-    expected_action: str = "KEEP_WORKSPACE"
+    expected_action: str = "N/A"
     automation_action: str = "N/A"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -121,12 +121,12 @@ def validate_complete_cell_values(cells: list[SmartsheetCell]) -> bool:
     for cell in cells:
         if getattr(cell, "column_id", None) == config.COLUMN_TITLES["deletion_date"]:
             deletion_date = getattr(cell, "value", None)
-            logging.info(f"Validating deletion date cell: {deletion_date}")
+            #logging.info(f"Validating deletion date cell: {deletion_date}")
             if not deletion_date:
                 return False
         elif getattr(cell, "column_id", None) == config.COLUMN_TITLES["em_notification_date"]:
             em_notification_date = getattr(cell, "value", None)
-            logging.info(f"Validating EM notification date cell: {em_notification_date}")
+            #logging.info(f"Validating EM notification date cell: {em_notification_date}")
             if not em_notification_date:
                 return False
             
@@ -368,6 +368,8 @@ def remove_query_string(string: str) -> str:
         >>> remove_query_string("text without query")
         'text without query'
     """
+    if type(string) != str:
+        raise TypeError(f"Expected a string but got {type(string)}")
     return string.split('?')[0]
 
 

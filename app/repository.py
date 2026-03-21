@@ -42,53 +42,25 @@ class SmartsheetRepository:
         if status_code == 404:
             return True
         return "404" in str(error)
-
-    def list_all_sheets(self) -> List[Any]:
-        """
-        Retrieve all sheets from Smartsheet.
-        
-        Returns:
-            List[Any]: List of sheet objects
-            
-        Raises:
-            SmartsheetAPIError: If the API call fails
-        """
-        try:
-            all_sheets = []
-            
-            # Get first page
-            response = self.client.Sheets.list_sheets(include_all=True)
-            logging.info(f"Total sheets available: {response.total_count}, Total pages: {response.total_pages}")
-            all_sheets.extend(response.data)
-            logging.info(f"Retrieved page 1/{response.total_pages}.")
-
-            # Get remaining pages
-            for page in range(2, response.total_pages + 1):
-                response = self.client.Sheets.list_sheets(include_all=True, page=page)
-                all_sheets.extend(response.data)
-                logging.info(f"Retrieved page {page}/{response.total_pages}.")
-            
-            return all_sheets
-        except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Failed to list sheets: {e}")
-            raise SmartsheetAPIError(f"Failed to list sheets: {e}")
     
-    def list_workspaces(self) -> List[Any]:
+    def get_current_user(self) -> Any:
         """
-        Retrieve all workspaces from Smartsheet.
+        Get information about the current authenticated user.
         
         Returns:
-            List[Any]: List of workspace objects
+            User object
             
         Raises:
             SmartsheetAPIError: If the API call fails
         """
         try:
-            response = self.client.Workspaces.list_workspaces(include_all=True)
-            return response.data
+            current_user = self.client.Users.get_current_user()
+            user_email = getattr(current_user, 'email', str(current_user))
+            logging.info(f"Authenticated as: {user_email}")
+            return current_user
         except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Failed to list workspaces: {e}")
-            raise SmartsheetAPIError(f"Failed to list workspaces: {e}")
+            logging.error(f"Failed to get current user: {e}")
+            raise SmartsheetAPIError(f"Failed to get current user: {e}")
 
     def get_all_workspaces(self) -> List[Any]:
         """
@@ -128,8 +100,31 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to retrieve all workspaces: {e}")
             raise SmartsheetAPIError(f"Failed to retrieve all workspaces: {e}")
+        
+    def get_workspace(self, workspace_id: int) -> Optional[Any]:
+        """
+        Retrieve workspace metadata by its ID.
+        
+        Args:
+            workspace_id: The ID of the workspace
+            
+        Returns:
+            Workspace object with metadata, or None if workspace not found (404)
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails with an error other than 404
+        """
+        try:
+            workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
+            logging.debug(f"Retrieved workspace {workspace_id}")
+            return workspace
+        except smartsheet.exceptions.SmartsheetException as e:
+            if self._is_not_found_error(e):
+                logging.info(f"Workspace {workspace_id} not found (404)")
+                return None
+            logging.error(f"Failed to get workspace {workspace_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get workspace {workspace_id}: {e}")
 
-    
     def delete_workspace(self, workspace_id: int) -> bool:
         """
         Delete a workspace by its ID.
@@ -210,30 +205,6 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
-        
-    def get_workspace(self, workspace_id: int) -> Optional[Any]:
-        """
-        Retrieve workspace metadata by its ID.
-        
-        Args:
-            workspace_id: The ID of the workspace
-            
-        Returns:
-            Workspace object with metadata, or None if workspace not found (404)
-            
-        Raises:
-            SmartsheetAPIError: If the API call fails with an error other than 404
-        """
-        try:
-            workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
-            logging.debug(f"Retrieved workspace {workspace_id}")
-            return workspace
-        except smartsheet.exceptions.SmartsheetException as e:
-            if self._is_not_found_error(e):
-                logging.info(f"Workspace {workspace_id} not found (404)")
-                return None
-            logging.error(f"Failed to get workspace {workspace_id}: {e}")
-            raise SmartsheetAPIError(f"Failed to get workspace {workspace_id}: {e}")
     
     def get_folder_children(self, folder_id: int) -> List[Any]:
         """
@@ -259,6 +230,36 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get folder children for {folder_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get folder children for {folder_id}: {e}")
+        
+    def list_all_sheets(self) -> List[Any]:
+        """
+        Retrieve all sheets from Smartsheet.
+        
+        Returns:
+            List[Any]: List of sheet objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_sheets = []
+            
+            # Get first page
+            response = self.client.Sheets.list_sheets(include_all=True)
+            logging.info(f"Total sheets available: {response.total_count}, Total pages: {response.total_pages}")
+            all_sheets.extend(response.data)
+            logging.info(f"Retrieved page 1/{response.total_pages}.")
+
+            # Get remaining pages
+            for page in range(2, response.total_pages + 1):
+                response = self.client.Sheets.list_sheets(include_all=True, page=page)
+                all_sheets.extend(response.data)
+                logging.info(f"Retrieved page {page}/{response.total_pages}.")
+            
+            return all_sheets
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to list sheets: {e}")
+            raise SmartsheetAPIError(f"Failed to list sheets: {e}")
     
     def get_sheet(self, sheet_id: int) -> Any:
         """
@@ -338,22 +339,28 @@ class SmartsheetRepository:
             logging.error(f"Error updating cell: {e}")
             raise SmartsheetAPIError(f"Failed to update cell: {e}")
     
-    def get_current_user(self) -> Any:
+    
+        
+    '''
+    #######################################
+    All legacy methods listed below. 
+    #######################################
+    '''
+
+    def list_workspaces(self) -> List[Any]:
         """
-        Get information about the current authenticated user.
+        Retrieve all workspaces from Smartsheet.
         
         Returns:
-            User object
+            List[Any]: List of workspace objects
             
         Raises:
             SmartsheetAPIError: If the API call fails
         """
         try:
-            current_user = self.client.Users.get_current_user()
-            user_email = getattr(current_user, 'email', str(current_user))
-            logging.info(f"Authenticated as: {user_email}")
-            return current_user
+            response = self.client.Workspaces.list_workspaces(include_all=True)
+            return response.data
         except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Failed to get current user: {e}")
-            raise SmartsheetAPIError(f"Failed to get current user: {e}")
+            logging.error(f"Failed to list workspaces: {e}")
+            raise SmartsheetAPIError(f"Failed to list workspaces: {e}")
         

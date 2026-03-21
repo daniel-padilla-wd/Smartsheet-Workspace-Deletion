@@ -7,8 +7,18 @@ the workflow without direct API calls.
 """
 
 import logging
-import pandas as pd
 from typing import Dict, List, Optional, Any
+from config import config
+from smartsheet.models.sheet import Sheet as SmartsheetSheet
+from smartsheet.models.row import Row as SmartsheetRow
+from smartsheet.models.cell import Cell as SmartsheetCell
+from smartsheet.models.sheet import Sheet as SmartsheetSheet
+from smartsheet.models.row import Row as SmartsheetRow
+from smartsheet.models.cell import Cell as SmartsheetCell
+from smartsheet.models.folder import Folder as SmartsheetFolder
+from smartsheet.models.sight import Sight as SmartsheetSight
+from smartsheet.models.report import Report as SmartsheetReport
+from smartsheet.models.template import Template as SmartsheetTemplate
 from repository import SmartsheetRepository, SmartsheetAPIError
 from utils import (
     should_workspace_be_deleted,
@@ -18,15 +28,10 @@ from utils import (
     is_pattern_substring,
     remove_query_string,
     validate_complete_cell_values,
-    return_validated_rows,
-    get_expected_action,
     remove_query_string,
     RowLogEntry
 )
-from config import config
-from smartsheet.models.sheet import Sheet as SmartsheetSheet
-from smartsheet.models.row import Row as SmartsheetRow
-from smartsheet.models.cell import Cell as SmartsheetCell
+
 
 
 class WorkspaceDeletionError(Exception):
@@ -101,6 +106,7 @@ class WorkspaceDeletionService:
             return workspace
         return None
     
+    # to utils.py
     def extract_row_data(self, row: SmartsheetRow) -> Dict[str, str]:
         """
         Extract relevant data from a sheet row.
@@ -260,6 +266,31 @@ class WorkspaceDeletionService:
             deletion_status=extracted_row_data.get("deletion_status"),
             automation_action="CONTINUE"
         )
+    
+    def list_resource_items_recursively(
+        self,
+        resource_list: list[SmartsheetSheet | SmartsheetFolder | SmartsheetReport | SmartsheetSight | SmartsheetTemplate],
+        parent_type: str = "workspace",
+        parent_id: Optional[int] = None,
+    ) -> list[SmartsheetSheet | SmartsheetFolder | SmartsheetReport | SmartsheetSight | SmartsheetTemplate]:
+
+        all_resources_in_workspace = []
+        for resource in resource_list:
+            logging.debug(f"Processing {parent_type} {parent_id} resource: {getattr(resource, 'name', 'N/A')} (ID: {getattr(resource, 'id', 'N/A')})")
+            if isinstance(resource, SmartsheetFolder):
+                logging.debug(f"Recursively listing items in folder ID {resource.id}")
+                # Recursively list items in the folder
+                folder_id = getattr(resource, "id", 0)
+
+                folder_contents = self.repository.get_folder_children(folder_id)
+                child_resources = self.list_resource_items_recursively(
+                    resource_list=folder_contents,  # Placeholder, replace with actual API call to get folder contents
+                    parent_type="folder",
+                    parent_id=folder_id,
+                )
+                all_resources_in_workspace.extend(child_resources)
+            #elif isinstance(resource, (SmartsheetSheet, SmartsheetReport, SmartsheetSight, SmartsheetTemplate)):
+        return all_resources_in_workspace
 
     '''
     #######################################

@@ -17,6 +17,10 @@ from config import config
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
 from smartsheet.models.row import Row as SmartsheetRow
 from smartsheet.models.cell import Cell as SmartsheetCell
+from smartsheet.models.folder import Folder as SmartsheetFolder
+from smartsheet.models.sight import Sight as SmartsheetSight
+from smartsheet.models.report import Report as SmartsheetReport
+from smartsheet.models.template import Template as SmartsheetTemplate
 
 @dataclass(frozen=True)
 class RowLogEntry:
@@ -197,23 +201,6 @@ def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: Optional
         filtered_rows.append(row)
 
     return filtered_rows
-
-
-def return_validated_rows(row: SmartsheetRow) -> list[SmartsheetRow]:
-    """
-    Process a Smartsheet row to determine if it passes validation checks.
-
-    Args:
-        row: A SmartsheetRow object to be processed.
-
-    Return:    
-        list[SmartsheetRow]: A list containing the row if it passes validation, or an empty list if it fails.
-    """
-    rows_that_pass_validation = []
-    if validate_complete_cell_values(row.cells):
-        rows_that_pass_validation.append(row)
-    print(f"Here are the rows that passed validation: {rows_that_pass_validation}")
-    return rows_that_pass_validation
 
 
 def should_workspace_be_deleted(em_notification_date: str, deletion_date: str, todays_date: str) -> bool:

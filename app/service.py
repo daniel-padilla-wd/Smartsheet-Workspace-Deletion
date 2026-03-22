@@ -291,6 +291,22 @@ class WorkspaceDeletionService:
                 all_resources_in_workspace.extend(child_resources)
             #elif isinstance(resource, (SmartsheetSheet, SmartsheetReport, SmartsheetSight, SmartsheetTemplate)):
         return all_resources_in_workspace
+    
+    def get_all_folder_content(self, folder_id: int) -> List[SmartsheetSheet | SmartsheetFolder | SmartsheetSight]:
+        all_folder_content= []
+        folder_contents: list = self.repository.get_all_folder_children(folder_id)
+        for item in folder_contents:
+            if isinstance(item, SmartsheetTemplate) or isinstance(item, SmartsheetReport):
+                continue
+            if isinstance(item, SmartsheetFolder):
+                logging.debug(f"Found item in folder {folder_id}: {getattr(item, 'name', 'N/A')} (ID: {getattr(item, 'id', 'N/A')})")
+                all_subfolder_content = []
+                subfolder_contents:list = self.get_all_folder_content(item.id)
+                all_subfolder_content.extend(subfolder_contents)
+                all_folder_content.extend(all_subfolder_content)
+            all_folder_content.append(item)
+        return all_folder_content
+        
 
     '''
     #######################################

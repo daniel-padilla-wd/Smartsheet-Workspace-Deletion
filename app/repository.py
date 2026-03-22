@@ -8,6 +8,11 @@ and error handling are centralized here.
 import logging
 from typing import Optional, List, Any
 import smartsheet.exceptions
+from smartsheet.models.sheet import Sheet as SmartsheetSheet
+from smartsheet.models.folder import Folder as SmartsheetFolder
+from smartsheet.models.sight import Sight as SmartsheetSight
+from smartsheet.models.report import Report as SmartsheetReport
+from smartsheet.models.template import Template as SmartsheetTemplate
 
 
 
@@ -87,7 +92,7 @@ class SmartsheetRepository:
                 page_count += 1
                 all_workspaces.extend(response.data)
 
-                logging.info(
+                logging.debug(
                     f"Retrieved workspace page {page_count} with {len(response.data)} items"
                 )
 
@@ -205,6 +210,46 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
+        
+    def get_all_workspace_children(self, workspace_id: int) -> List[Any]:
+        """
+        Retrieve all children from a workspace using token-based pagination.
+        
+        Args:
+            workspace_id: The ID of the workspace
+            
+        Returns:
+            List[Any]: Flat list of all workspace children objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_children: List[Any] = []
+            last_key: Optional[str] = None
+            max_items = 1000
+            page_count = 0
+
+            while True:
+                response = self.client.Workspaces.get_workspace_children(
+                    workspace_id,
+                    last_key=last_key,
+                    max_items=max_items
+                )
+                page_count += 1
+                all_children.extend(response.data)
+
+                logging.debug(f"Retrieved workspace children page {page_count} with {len(response.data)} items")
+
+                last_key = response.last_key
+                if not last_key:
+                    break
+
+            logging.info(f"Retrieved {len(all_children)} total children for workspace {workspace_id}")
+            return all_children
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to retrieve all workspace children for {workspace_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to retrieve all workspace children for {workspace_id}: {e}")
     
     def get_folder_children(self, folder_id: int) -> List[Any]:
         """
@@ -230,6 +275,47 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get folder children for {folder_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get folder children for {folder_id}: {e}")
+        
+    def get_all_folder_children(self, folder_id: int) -> List[Any]:
+        """
+        Retrieve all children from a folder using token-based pagination.
+        
+        Args:
+            folder_id: The ID of the folder
+            
+        Returns:
+            List[Any]: Flat list of all folder children objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            all_children: List[Any] = []
+            last_key: Optional[str] = None
+            max_items = 1000
+            page_count = 0
+
+            while True:
+                response = self.client.Folders.get_folder_children(
+                    folder_id,
+                    last_key=last_key,
+                    max_items=max_items
+                )
+                page_count += 1
+                all_children.extend(response.data)
+
+                logging.debug(f"Retrieved folder children page {page_count} with {len(response.data)} items")
+
+                last_key = response.last_key
+                if not last_key:
+                    break
+
+            logging.info(f"Retrieved {len(all_children)} total children for folder {folder_id}")
+            return all_children
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to retrieve all folder children for {folder_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to retrieve all folder children for {folder_id}: {e}")
+
         
     def list_all_sheets(self) -> List[Any]:
         """

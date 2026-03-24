@@ -24,62 +24,6 @@ from utils import (
 )
 
 def main():
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    
-    # Validate OAuth configuration before proceeding
-    try:
-        config.validate_oauth_config()
-        config.validate_sheet_config()
-    except ConfigurationError as e:
-        logging.error(f"Configuration error: {e}")
-        return {"error": f"Configuration error: {e}"}
-    
-    # Get authenticated client via OAuth handler
-    client = get_smartsheet_client(config.OAUTH_SCOPES)
-    
-    if not client:
-        logging.error("Authentication failed. Check logs for details.")
-        return {"error": "Authentication failed"}
-        
-    logging.info("Successfully authenticated with OAuth 2.0!")
-    
-    # Initialize repository and service
-    ss_api = SmartsheetRepository(client)  
-    ss_workflow = WorkspaceDeletionService(ss_api)
-    
-    # Verify authentication
-    current_user = ss_api.get_current_user()
-    logging.info(f"Authenticated as: {current_user.email if current_user else 'Unknown'}")
-    
-    # Determine which sheet ID to use based on DEV_MODE
-    sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
-    
-    # Process the deletion workflow
-    logging.info(f"Starting workspace deletion workflow for sheet ID: {sheet_id}")
-    summary = ss_workflow.process_deletion_workflow(sheet_id)
-    
-    # Display results
-    if "error" in summary:
-        logging.error(f"Workflow error: {summary['error']}")
-    
-    logging.info("=" * 60)
-    logging.info("WORKFLOW SUMMARY")
-    logging.info("=" * 60)
-    logging.info(f"Total rows processed: {summary['processed_rows']}")
-    logging.info(f"Successful deletions: {summary['successful_deletions']}")
-    logging.info(f"Skipped: {summary['skipped']}")
-    logging.info(f"Errors: {len(summary['errors'])}")
-    
-    if summary['errors']:
-        logging.info("\nError details:")
-        for error in summary['errors']:
-            logging.error(f"  Row {error['row_index']}: {error['error']}")
-    
-    logging.info("=" * 60)
-    
-    return summary
-
-def verify_main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     
     # Set up file logging for this session
@@ -101,9 +45,7 @@ def verify_main():
 
     intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
 
-    logging.info(
-        "Starting workspace verification workflow (no deletion operations enabled)"
-    )
+    logging.info("Starting workspace verification workflow (no deletion operations enabled)")
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
     all_sheets = repository.list_all_sheets()
 
@@ -126,7 +68,6 @@ def verify_main():
     appears_deleted = sum(1 for e in log_entries if not e.workspace_id)
     skipped = sum(1 for e in log_entries if e.automation_action.startswith("SKIPPED"))
     errors = sum(1 for e in log_entries if e.automation_action.startswith("error"))
-    next_phase = sum(1 for e in log_entries if e.automation_action == "CONTINUE")  
 
     deleted_workspaces = delete_verified_workspaces(log_entries, repository, service, safe_mode=True)
     print(f"Total entries marked as deleted: {len(deleted_workspaces)}")
@@ -179,7 +120,7 @@ def lambda_handler(event, context):
 '''
 
 if __name__ == "__main__":
-    verify_main()
+    main()
 
 
 

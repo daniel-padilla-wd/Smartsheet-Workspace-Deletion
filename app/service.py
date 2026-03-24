@@ -318,6 +318,8 @@ class WorkspaceDeletionService:
         if type(safe_mode) is not bool:
             raise ValueError(f"read_only parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
         
+        status = "Deleted" if not safe_mode else "SAFE MODE: Deleted"
+        
         try:
             self.repository.update_cell(
                 sheet_id=config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID,
@@ -332,9 +334,9 @@ class WorkspaceDeletionService:
                 workspace_id=entry.workspace_id,
                 workspace_permalink=entry.workspace_permalink,
                 folder_url=entry.folder_url,
-                deletion_date="Deleted" if not safe_mode else "SAFE MODE: Deleted",
+                deletion_date=entry.deletion_date,
                 em_notification_date=entry.em_notification_date,
-                deletion_status=entry.deletion_status,
+                deletion_status=status,
                 expected_action=entry.expected_action,
                 automation_action="WORKSPACE_DELETED" if not safe_mode else "SAFE MODE: WORKSPACE_DELETED",
             )
@@ -348,7 +350,7 @@ class WorkspaceDeletionService:
                 folder_url=entry.folder_url,
                 deletion_date=entry.deletion_date,
                 em_notification_date=entry.em_notification_date,
-                deletion_status=entry.deletion_status,
+                deletion_status=f"FAILED_TO_UPDATE_STATUS: {status}",
                 expected_action=entry.expected_action,
                 automation_action=f"ERROR UPDATING STATUS: {str(e)}"
             )

@@ -76,7 +76,9 @@ class Config:
     }
 
     # Application Settings
-    LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_LEVEL: str = 'INFO'
+    FILE_LOGGING_LEVEL: str = os.getenv('FILE_LOGGING_LEVEL', 'DEBUG')
+    CONSOLE_LOGGING_LEVEL: str = os.getenv('CONSOLE_LOGGING_LEVEL', 'INFO')
     TIMEZONE: str = os.getenv('TIMEZONE', 'America/Los_Angeles')
     
     @classmethod

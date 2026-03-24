@@ -105,7 +105,6 @@ def verify_main():
         "Starting workspace verification workflow (no deletion operations enabled)"
     )
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
-    # all_workspaces = repository.get_all_workspaces()
     all_sheets = repository.list_all_sheets()
 
     todays_date = get_pacific_today_date()

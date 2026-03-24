@@ -360,26 +360,42 @@ def remove_query_string(string: str) -> str:
     return string.split('?')[0]
 
 
-def setup_file_logging(session_name: str, log_dir: str = "logs") -> str:
+def setup_file_logging(session_name: str, log_dir: str = "logs", file_level: Optional[str] = None) -> str:
     """
-    Set up logging to both console and file.
+    Set up file logging with configurable level.
 
-    This function configures the root logger to output logs to both the console and a file.
-    Useful for capturing logs from long-running operations while still seeing output.
+    This function adds a file handler to the root logger without escalating the root logger level.
+    The file handler level is independent from the console/root logger level, allowing detailed
+    file logs while keeping console output clean.
 
     Args:
         session_name: Name of the session/function (used in log filename)
         log_dir: Directory to store logs (default: "logs")
+        file_level: Logging level for file handler ("DEBUG", "INFO", "WARNING", "ERROR").
+                   If None, uses config.FILE_LOGGING_LEVEL (default: "DEBUG")
 
     Returns:
         str: Path to the log file
 
     Example:
         log_file = setup_file_logging("workspace_verification")
-        # Now all logging calls will also write to logs/workspace_verification_YYYYMMDD_HHMMSS.log
+        # File captures DEBUG, console stays at INFO (from basicConfig)
+        
+        log_file = setup_file_logging("workspace_verification", file_level="WARNING")
+        # File captures WARNING and above only
     """
     from pathlib import Path
 
+    # Use provided level or read from config
+    if file_level is None:
+        file_level = config.FILE_LOGGING_LEVEL
+    
+    # Validate logging level
+    valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+    level_upper = file_level.upper()
+    if level_upper not in valid_levels:
+        raise ValueError(f"Invalid logging level '{file_level}'. Must be one of: {', '.join(valid_levels)}")
+    
     # Create logs directory if it doesn't exist
     log_path = Path(log_dir)
     log_path.mkdir(exist_ok=True)
@@ -388,9 +404,9 @@ def setup_file_logging(session_name: str, log_dir: str = "logs") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = log_path / f"{session_name}_{timestamp}.log"
 
-    # Set up file handler
+    # Set up file handler with configured level
     file_handler = logging.FileHandler(log_file, mode="w")
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(getattr(logging, level_upper))
 
     # Format for file logs
     file_formatter = logging.Formatter(
@@ -400,11 +416,13 @@ def setup_file_logging(session_name: str, log_dir: str = "logs") -> str:
     file_handler.setFormatter(file_formatter)
 
     # Add file handler to root logger
+    # Note: We do NOT escalate the root logger level here.
+    # The root logger level is set by basicConfig and stays independent from the file handler level.
     root_logger = logging.getLogger()
     root_logger.addHandler(file_handler)
-    root_logger.setLevel(logging.DEBUG)
 
-    logging.info(f"Logging to file: {log_file}")
+    logging.info(f"File logging initialized: {log_file} (level: {level_upper})")
+    logging.debug(f"Root logger level: {logging.getLevelName(root_logger.level)}, Console output level: INFO (from basicConfig)")
     return str(log_file)
 
 

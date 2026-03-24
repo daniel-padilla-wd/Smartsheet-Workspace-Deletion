@@ -60,7 +60,7 @@ class Config:
     S_DELETION_STATUS_ID: int = 2055947308191620
 
     # PROD Sheet Configuration
-    INTAKE_SHEET_ID: str = os.getenv('INTAKE_SHEET_ID', '')
+    INTAKE_SHEET_ID: int = int(os.getenv('INTAKE_SHEET_ID', 0))
     # Column IDs - to be set after fetching sheet details via API
     FOLDER_URL_ID: int = 2443238423455620
     DELETION_DATE_ID: int = 7037757129287556

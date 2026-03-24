@@ -267,31 +267,6 @@ class WorkspaceDeletionService:
             automation_action="CONTINUE"
         )
     
-    def list_resource_items_recursively(
-        self,
-        resource_list: list[SmartsheetSheet | SmartsheetFolder | SmartsheetReport | SmartsheetSight | SmartsheetTemplate],
-        parent_type: str = "workspace",
-        parent_id: Optional[int] = None,
-    ) -> list[SmartsheetSheet | SmartsheetFolder | SmartsheetReport | SmartsheetSight | SmartsheetTemplate]:
-
-        all_resources_in_workspace = []
-        for resource in resource_list:
-            logging.debug(f"Processing {parent_type} {parent_id} resource: {getattr(resource, 'name', 'N/A')} (ID: {getattr(resource, 'id', 'N/A')})")
-            if isinstance(resource, SmartsheetFolder):
-                logging.debug(f"Recursively listing items in folder ID {resource.id}")
-                # Recursively list items in the folder
-                folder_id = getattr(resource, "id", 0)
-
-                folder_contents = self.repository.get_folder_children(folder_id)
-                child_resources = self.list_resource_items_recursively(
-                    resource_list=folder_contents,  # Placeholder, replace with actual API call to get folder contents
-                    parent_type="folder",
-                    parent_id=folder_id,
-                )
-                all_resources_in_workspace.extend(child_resources)
-            #elif isinstance(resource, (SmartsheetSheet, SmartsheetReport, SmartsheetSight, SmartsheetTemplate)):
-        return all_resources_in_workspace
-    
     def get_all_folder_content(self, folder_id: int) -> List[SmartsheetSheet | SmartsheetFolder | SmartsheetSight]:
         all_folder_content= []
         folder_contents: list = self.repository.get_all_folder_children(folder_id)
@@ -306,6 +281,78 @@ class WorkspaceDeletionService:
                 all_folder_content.extend(all_subfolder_content)
             all_folder_content.append(item)
         return all_folder_content
+    
+    def get_all_workspace_content(self, workspace_id: int) -> List[SmartsheetSheet | SmartsheetFolder | SmartsheetSight]:
+        all_workspace_content = []
+        workspace_children: list = self.repository.get_all_workspace_children(workspace_id)
+        for item in workspace_children:
+            if isinstance(item, SmartsheetTemplate) or isinstance(item, SmartsheetReport):
+                continue
+            if isinstance(item, SmartsheetFolder):
+                logging.debug(f"Found item in workspace {workspace_id}: {getattr(item, 'name', 'N/A')} (ID: {getattr(item, 'id', 'N/A')})")
+                folder_content:list = self.get_all_folder_content(item.id)
+                all_workspace_content.extend(folder_content)
+            all_workspace_content.append(item)
+        return all_workspace_content
+    
+    def delete_all_workspace_content(self, all_workspace_content: List[SmartsheetSheet | SmartsheetFolder | SmartsheetSight], safe_mode: bool = True) -> None:
+        if type(safe_mode) is not bool:
+            raise ValueError(f"safe_mode parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+        
+        if safe_mode:
+            logging.info("Safe mode enabled - no deletions will be performed. The following items would be deleted:")
+
+        for item in all_workspace_content:
+            if isinstance(item, SmartsheetSheet):
+                logging.debug(f"Deleting sheet {item.id} in workspace...")
+                self.repository.delete_sheet(item.id, safe_mode=safe_mode)
+            elif isinstance(item, SmartsheetFolder):
+                logging.debug(f"Deleting folder {item.id} in workspace...")
+                self.repository.delete_folder(item.id, safe_mode=safe_mode)
+            elif isinstance(item, SmartsheetSight):
+                logging.debug(f"Deleting sight {item.id} in workspace...")
+                self.repository.delete_sight(item.id, safe_mode=safe_mode)
+        logging.info("Workspace deletion complete.")
+
+    def process_deletion_status_update(self, entry: RowLogEntry, safe_mode: bool = True) -> RowLogEntry:
+        if type(safe_mode) is not bool:
+            raise ValueError(f"read_only parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+        
+        try:
+            self.repository.update_cell(
+                sheet_id=config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID,
+                row_id=entry.row_id,
+                column_id=config.COLUMN_TITLES["deletion_status"],
+                new_value="Deleted",
+                safe_mode=safe_mode
+            )
+            return RowLogEntry(
+                row_index=entry.row_index,
+                row_id=entry.row_id,
+                workspace_id=entry.workspace_id,
+                workspace_permalink=entry.workspace_permalink,
+                folder_url=entry.folder_url,
+                deletion_date="Deleted" if not safe_mode else "SAFE MODE: Deleted",
+                em_notification_date=entry.em_notification_date,
+                deletion_status=entry.deletion_status,
+                expected_action=entry.expected_action,
+                automation_action="WORKSPACE_DELETED" if not safe_mode else "SAFE MODE: WORKSPACE_DELETED",
+            )
+        except SmartsheetAPIError as e:
+            logging.error(f"Error updating deletion status for row {entry.row_id}: {e}")
+            return RowLogEntry(
+                row_index=entry.row_index,
+                row_id=entry.row_id,
+                workspace_id=entry.workspace_id,
+                workspace_permalink=entry.workspace_permalink,
+                folder_url=entry.folder_url,
+                deletion_date=entry.deletion_date,
+                em_notification_date=entry.em_notification_date,
+                deletion_status=entry.deletion_status,
+                expected_action=entry.expected_action,
+                automation_action=f"ERROR UPDATING STATUS: {str(e)}"
+            )
+        
         
 
     '''

@@ -66,6 +66,30 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to get current user: {e}")
             raise SmartsheetAPIError(f"Failed to get current user: {e}")
+        
+    def get_workspace(self, workspace_id: int) -> Optional[Any]:
+        """
+        Retrieve workspace metadata by its ID.
+        
+        Args:
+            workspace_id: The ID of the workspace
+            
+        Returns:
+            Workspace object with metadata, or None if workspace not found (404)
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails with an error other than 404
+        """
+        try:
+            workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
+            logging.debug(f"Retrieved workspace {workspace_id}")
+            return workspace
+        except smartsheet.exceptions.SmartsheetException as e:
+            if self._is_not_found_error(e):
+                logging.info(f"Workspace {workspace_id} not found (404)")
+                return None
+            logging.error(f"Failed to get workspace {workspace_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get workspace {workspace_id}: {e}")
 
     def get_all_workspaces(self) -> List[Any]:
         """
@@ -106,111 +130,6 @@ class SmartsheetRepository:
             logging.error(f"Failed to retrieve all workspaces: {e}")
             raise SmartsheetAPIError(f"Failed to retrieve all workspaces: {e}")
         
-    def get_workspace(self, workspace_id: int) -> Optional[Any]:
-        """
-        Retrieve workspace metadata by its ID.
-        
-        Args:
-            workspace_id: The ID of the workspace
-            
-        Returns:
-            Workspace object with metadata, or None if workspace not found (404)
-            
-        Raises:
-            SmartsheetAPIError: If the API call fails with an error other than 404
-        """
-        try:
-            workspace = self.client.Workspaces.get_workspace_metadata(workspace_id)
-            logging.debug(f"Retrieved workspace {workspace_id}")
-            return workspace
-        except smartsheet.exceptions.SmartsheetException as e:
-            if self._is_not_found_error(e):
-                logging.info(f"Workspace {workspace_id} not found (404)")
-                return None
-            logging.error(f"Failed to get workspace {workspace_id}: {e}")
-            raise SmartsheetAPIError(f"Failed to get workspace {workspace_id}: {e}")
-
-    def delete_workspace(self, workspace_id: int) -> bool:
-        """
-        Delete a workspace by its ID.
-        
-        Args:
-            workspace_id: The ID of the workspace to delete
-            
-        Returns:
-            bool: True if deletion was successful, False otherwise
-            
-        Raises:
-            SmartsheetAPIError: If the API call fails with an unexpected error
-        """
-        try:
-            response = self.client.Workspaces.delete_workspace(workspace_id)
-            
-            if response.message == "SUCCESS":
-                logging.info(f"Workspace with ID {workspace_id} deleted successfully.")
-                return True
-            else:
-                logging.error(f"Failed to delete workspace with ID {workspace_id}. Response: {response}")
-                return False
-                
-        except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Error deleting workspace {workspace_id}: {e}")
-            raise SmartsheetAPIError(f"Failed to delete workspace {workspace_id}: {e}")
-        
-    def delete_folder(self, folder_id: int) -> bool:
-        """
-        Delete a folder by its ID.
-        
-        Args:
-            folder_id: The ID of the folder to delete
-            
-        Returns:
-            bool: True if deletion was successful, False otherwise
-            
-        Raises:
-            SmartsheetAPIError: If the API call fails with an unexpected error
-        """
-        try:
-            response = self.client.Folders.delete_folder(folder_id)
-            logging.info(f"Delete folder response: {response}")
-            
-            if response.message == "SUCCESS":
-                logging.info(f"Folder with ID {folder_id} deleted successfully.")
-                return True
-            else:
-                logging.error(f"Failed to delete folder with ID {folder_id}. Response: {response}")
-                return False
-                
-        except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Error deleting folder {folder_id}: {e}")
-            raise SmartsheetAPIError(f"Failed to delete folder {folder_id}: {e}")
-    
-    def get_workspace_children(self, workspace_id: int) -> List[Any]:
-        """
-        Retrieve all children (sheets, folders, reports, etc.) from a workspace.
-        
-        Args:
-            workspace_id: The ID of the workspace
-            
-        Returns:
-            List[Any]: List of workspace children objects
-            
-        Raises:
-            SmartsheetAPIError: If the API call fails
-        """
-        try:
-            
-            response = self.client.Workspaces.get_workspace_children(
-                workspace_id
-            )
-            #logging.info(f"Retrieved {len(response)} children for workspace {workspace_id}")
-            logging.debug(f"Workspace {workspace_id} children: {response}")
-            return response
-            
-        except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
-            raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
-        
     def get_all_workspace_children(self, workspace_id: int) -> List[Any]:
         """
         Retrieve all children from a workspace using token-based pagination.
@@ -250,31 +169,33 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to retrieve all workspace children for {workspace_id}: {e}")
             raise SmartsheetAPIError(f"Failed to retrieve all workspace children for {workspace_id}: {e}")
-    
-    def get_folder_children(self, folder_id: int) -> List[Any]:
+        
+    def delete_workspace(self, workspace_id: int, safe_mode: bool = True) -> None:
         """
-        Retrieve all children (sheets, folders, reports, etc.) from a folder.
+        Delete a workspace by its ID.
         
         Args:
-            folder_id: The ID of the folder
+            workspace_id: The ID of the workspace to delete
             
         Returns:
-            List[Any]: List of folder children objects
+            bool: True if deletion was successful, False otherwise
             
         Raises:
-            SmartsheetAPIError: If the API call fails
+            SmartsheetAPIError: If the API call fails with an unexpected error
         """
-        try:
-            response = self.client.Folders.get_folder_children(
-                    folder_id,
-                )
-            logging.info(f"Retrieved {len(response.data)} children for folder {folder_id}")
-            logging.debug(f"Folder {folder_id} children: {response}")
-            return response
-            
-        except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Failed to get folder children for {folder_id}: {e}")
-            raise SmartsheetAPIError(f"Failed to get folder children for {folder_id}: {e}")
+        if type(safe_mode) is not bool:
+            raise ValueError(f"safe_mode parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+        
+        if not safe_mode:
+            logging.warning(f"Safe mode is disabled. Workspace {workspace_id} will be permanently deleted without confirmation.")
+            try:
+                response = self.client.Workspaces.delete_workspace(workspace_id)
+                logging.debug(f"Delete workspace response: {response}")
+            except smartsheet.exceptions.SmartsheetException as e:
+                logging.error(f"Error deleting workspace {workspace_id}: {e}")
+                raise SmartsheetAPIError(f"Failed to delete workspace {workspace_id}: {e}")
+        else:
+            logging.info(f"SAFE MODE: Workspace {workspace_id} would be deleted. No action taken.")
         
     def get_all_folder_children(self, folder_id: int) -> List[Any]:
         """
@@ -315,6 +236,32 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to retrieve all folder children for {folder_id}: {e}")
             raise SmartsheetAPIError(f"Failed to retrieve all folder children for {folder_id}: {e}")
+        
+    def delete_folder(self, folder_id: int, safe_mode: bool = True) -> None:
+        """
+        Delete a folder by its ID.
+        
+        Args:
+            folder_id: The ID of the folder to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails with an unexpected error
+        """
+        if type(safe_mode) is not bool:
+            raise ValueError(f"safe_mode parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+        if not safe_mode:
+            logging.warning(f"Safe mode is disabled. Folder {folder_id} will be permanently deleted without confirmation.")
+            try:
+                response = self.client.Folders.delete_folder(folder_id)
+                logging.debug(f"Delete folder response: {response}")
+            except smartsheet.exceptions.SmartsheetException as e:
+                logging.error(f"Error deleting folder {folder_id}: {e}")
+                raise SmartsheetAPIError(f"Failed to delete folder {folder_id}: {e}")
+        else:
+            logging.info(f"SAFE MODE: Folder {folder_id} would be deleted. No action taken.")
 
         
     def list_all_sheets(self) -> List[Any]:
@@ -366,6 +313,58 @@ class SmartsheetRepository:
             logging.error(f"Failed to get sheet {sheet_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get sheet {sheet_id}: {e}")
         
+    def delete_sheet(self, sheet_id: int, safe_mode:bool=True) -> None:
+        """
+        Delete a sheet by its ID.
+        
+        Args:
+            sheet_id: The ID of the sheet to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        if type(safe_mode) is not bool:
+            raise ValueError(f"safe_mode parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+        if not safe_mode:
+            logging.warning(f"Safe mode is disabled. Sheet {sheet_id} will be permanently deleted without confirmation.")
+            try:
+                response = self.client.Sheets.delete_sheet(sheet_id)
+                logging.debug(f"Delete sheet response: {response}")
+            except smartsheet.exceptions.SmartsheetException as e:
+                logging.error(f"Error deleting sheet {sheet_id}: {e}")
+                raise SmartsheetAPIError(f"Failed to delete sheet {sheet_id}: {e}")
+        else:
+            logging.info(f"SAFE MODE: Sheet {sheet_id} would be deleted. No action taken.")
+        
+    def delete_sight(self, sight_id: int, safe_mode: bool = True) -> None:
+        """
+        Delete a sight by its ID.
+        
+        Args:
+            sight_id: The ID of the sight to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        if type(safe_mode) is not bool:
+            raise ValueError(f"safe_mode parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+        if not safe_mode:
+            logging.warning(f"Safe mode is disabled. Sight {sight_id} will be permanently deleted without confirmation.")
+            try:
+                response = self.client.Sights.delete_sight(sight_id)
+                logging.debug(f"Delete sight response: {response}")
+            except smartsheet.exceptions.SmartsheetException as e:
+                logging.error(f"Error deleting sight {sight_id}: {e}")
+                raise SmartsheetAPIError(f"Failed to delete sight {sight_id}: {e}")
+        else:
+            logging.info(f"SAFE MODE: Sight {sight_id} would be deleted. No action taken.")
+        
     def get_columns(self, sheet_id: int) -> List[Any]:
         """
         Retrieve all columns from a sheet.
@@ -386,7 +385,7 @@ class SmartsheetRepository:
             logging.error(f"Failed to get columns for sheet {sheet_id}: {e}")
             raise SmartsheetAPIError(f"Failed to get columns for sheet {sheet_id}: {e}")
     
-    def update_cell(self, sheet_id: int, row_id: int, column_id: int, new_value: str) -> bool:
+    def update_cell(self, sheet_id: int, row_id: int, column_id: int, new_value: str, safe_mode: bool = True) -> bool:
         """
         Update a specific cell in a sheet.
         
@@ -402,28 +401,35 @@ class SmartsheetRepository:
         Raises:
             SmartsheetAPIError: If the API call fails
         """
-        logging.info(f"Updating cell in row {row_id}, column {column_id} to '{new_value}'")
+        if type(safe_mode) is not bool:
+            raise ValueError(f"read_only parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+
+        if not safe_mode:
+            logging.warning(f"Safe mode is disabled. Cell in row {row_id}, column {column_id} of sheet {sheet_id} would be updated to '{new_value}' without confirmation.")
         
-        try:
-            # Build new cell value
-            new_cell = self.client.models.Cell()
-            new_cell.column_id = column_id
-            new_cell.value = new_value
-            new_cell.strict = False
-            
-            # Build the row to update
-            new_row = self.client.models.Row()
-            new_row.id = row_id
-            new_row.cells.append(new_cell)
-            
-            # Update the row
-            response = self.client.Sheets.update_rows(sheet_id, [new_row])
-            # logging.info(f"Cell updated successfully: {response}")
+            try:
+                # Build new cell value
+                new_cell = self.client.models.Cell()
+                new_cell.column_id = column_id
+                new_cell.value = new_value
+                new_cell.strict = False
+                
+                # Build the row to update
+                new_row = self.client.models.Row()
+                new_row.id = row_id
+                new_row.cells.append(new_cell)
+                
+                # Update the row
+                response = self.client.Sheets.update_rows(sheet_id, [new_row])
+                # logging.info(f"Cell updated successfully: {response}")
+                return True
+                
+            except smartsheet.exceptions.SmartsheetException as e:
+                logging.error(f"Error updating cell: {e}")
+                raise SmartsheetAPIError(f"Failed to update cell: {e}")
+        else:
+            logging.info(f"SAFE MODE: Cell in row {row_id}, column {column_id} of sheet {sheet_id} would be updated to '{new_value}'. No action taken.")
             return True
-            
-        except smartsheet.exceptions.SmartsheetException as e:
-            logging.error(f"Error updating cell: {e}")
-            raise SmartsheetAPIError(f"Failed to update cell: {e}")
     
     
         
@@ -449,4 +455,55 @@ class SmartsheetRepository:
         except smartsheet.exceptions.SmartsheetException as e:
             logging.error(f"Failed to list workspaces: {e}")
             raise SmartsheetAPIError(f"Failed to list workspaces: {e}")
+        
+    def get_workspace_children(self, workspace_id: int) -> List[Any]:
+        """
+        Retrieve all children (sheets, folders, reports, etc.) from a workspace.
+        
+        Args:
+            workspace_id: The ID of the workspace
+            
+        Returns:
+            List[Any]: List of workspace children objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            
+            response = self.client.Workspaces.get_workspace_children(
+                workspace_id
+            )
+            #logging.info(f"Retrieved {len(response)} children for workspace {workspace_id}")
+            logging.debug(f"Workspace {workspace_id} children: {response}")
+            return response
+            
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to get workspace children for {workspace_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get workspace children for {workspace_id}: {e}")
+        
+    def get_folder_children(self, folder_id: int) -> List[Any]:
+        """
+        Retrieve all children (sheets, folders, reports, etc.) from a folder.
+        
+        Args:
+            folder_id: The ID of the folder
+            
+        Returns:
+            List[Any]: List of folder children objects
+            
+        Raises:
+            SmartsheetAPIError: If the API call fails
+        """
+        try:
+            response = self.client.Folders.get_folder_children(
+                    folder_id,
+                )
+            logging.info(f"Retrieved {len(response.data)} children for folder {folder_id}")
+            logging.debug(f"Folder {folder_id} children: {response}")
+            return response
+            
+        except smartsheet.exceptions.SmartsheetException as e:
+            logging.error(f"Failed to get folder children for {folder_id}: {e}")
+            raise SmartsheetAPIError(f"Failed to get folder children for {folder_id}: {e}")
         

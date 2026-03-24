@@ -120,6 +120,44 @@ def verify_project_status(
 
     return log_entries
 
+def delete_verified_workspaces(log_entries: list[RowLogEntry], repository: SmartsheetRepository, service: WorkspaceDeletionService, safe_mode: bool = True) -> list[RowLogEntry]:
+    """
+    Given a list of RowLogEntry objects, perform deletion operations for rows where the workspace appears to already be deleted.
+
+    Args:
+        log_entries: List of RowLogEntry objects from the verification phase.
+        service: Service instance containing deletion logic.
+    Returns:
+        None
+    """
+    if type(safe_mode) is not bool:
+        raise ValueError(f"read_only parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+    deleted_log_entries: list[RowLogEntry] = []
+    for entry in log_entries:
+        if entry.workspace_id is None:
+            logging.warning(f"Row {entry.row_index}: No workspace ID resolved, skipping deletion operations.")
+            continue
+        if entry.automation_action == "CONTINUE" and entry.expected_action == "DELETE_WORKSPACE":
+            logging.info(f"Row {entry.row_index}: Proceeding with deletion operations for workspace ID {entry.workspace_id}")
+            all_workspace_content: list = service.get_all_workspace_content(entry.workspace_id)
+            logging.info(f"Row {entry.row_index}: Retrieved {len(all_workspace_content)} total items in workspace ID {entry.workspace_id} for deletion")
+            service.delete_all_workspace_content(all_workspace_content, safe_mode = safe_mode)
+            logging.info(f"Row {entry.row_index}: Completed delete_all_workspace_content operations for workspace ID {entry.workspace_id}")
+            logging.info(f"Row {entry.row_index}: Proceeding with deleting workspace ID {entry.workspace_id}")
+            repository.delete_workspace(entry.workspace_id, safe_mode = safe_mode)
+            logging.info(f"Row {entry.row_index}: Completed deletion of workspace ID {entry.workspace_id}")
+            logging.info(f"Updating deletion_status cell in row {entry.row_id} 'Deleted'")
+            deletion_status_update = service.process_deletion_status_update(entry, safe_mode = safe_mode)
+            log_row_entry(
+                deletion_status_update, 
+                level="ERROR" if deletion_status_update.automation_action.startswith("ERROR") else "INFO"
+            )
+            deleted_log_entries.append(deletion_status_update) 
+    logging.info("Completed deletion operations for all applicable workspaces.")
+    return deleted_log_entries
+
+    
+
 def main() -> Dict[str, Any]:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     
@@ -179,6 +217,13 @@ def main() -> Dict[str, Any]:
     errors = sum(1 for e in log_entries if e.automation_action.startswith("error"))
     next_phase = sum(1 for e in log_entries if e.automation_action == "CONTINUE")  
 
+    deleted_workspaces = delete_verified_workspaces(log_entries, repository, service, safe_mode=True)
+    print(f"Total entries marked as deleted: {len(deleted_workspaces)}")
+
+    for item in deleted_workspaces:
+        print(f"Deleted entry: {item.to_dict()}")
+
+
     logging.info("=" * 60)
     logging.info("VERIFICATION SUMMARY")
     logging.info("=" * 60)
@@ -227,7 +272,7 @@ def tests():
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
-    #all_sheets = repository.list_all_sheets()
+    all_sheets = repository.list_all_sheets()
 
     intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
@@ -239,36 +284,15 @@ def tests():
 
     filtered_intake_data = filter_intake_data(intake_sheet, todays_date, has_folder_url=True)
     logging.info(f"Filtered intake data to {len(filtered_intake_data)} rows with folder URLs and deletion dates in the past or today")
+   
+    log_entries = verify_project_status(filtered_intake_data,todays_date,service,all_sheets)
+    print(f"Total log entries: {len(log_entries)}")
 
-    rows_that_passed_checks = []
-    for row in filtered_intake_data:
-        hyperlink = get_hyperlink_from_cell(row.cells)
-        #logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Extracted hyperlink: {hyperlink}") 
-        complete_cell_values = validate_complete_cell_values(row.cells)
-        #logging.info(f"Row {getattr(row, 'row_number', 'N/A')}: Complete cell values: {complete_cell_values}")
-        if validate_complete_cell_values(row.cells):
-            rows_that_passed_checks.append(row)
-    logging.info(f"{len(rows_that_passed_checks)} rows passed initial checks for folder URL and deletion date")
+    deleted_workspaces = delete_verified_workspaces(log_entries, repository, service, safe_mode=True)
+    print(f"Total entries marked as deleted: {len(deleted_workspaces)}")
 
-    #log_entries = verify_project_status(filtered_intake_data,todays_date,service,all_sheets)
-    #print(f"Total log entries: {len(log_entries)}")
+    for item in deleted_workspaces:
+        print(f"Deleted entry: {item.to_dict()}")
 
-    workspace_id = 852176508610436
-    workspace_childern = repository.get_all_workspace_children(workspace_id)
-    print(f"Children of workspace {workspace_id}: {workspace_childern}")
-    print(f"Total children: {len(workspace_childern)}")
-    print(f"View list: {workspace_childern}")
-    print(f"IDs of children: {[getattr(child, 'id', 'N/A') for child in workspace_childern]}")
-
-    folder_id = 4553024141059972
-    folder_children = repository.get_all_folder_children(folder_id)
-    print(f"Children of folder {folder_id}: {folder_children}")
-    print(f"Total children: {len(folder_children)}")
-    print(f"View list: {folder_children}")
-    print(f"IDs, type of children: {[(getattr(child, 'id', 'N/A'), type(child)) for child in folder_children]}")
-        
-    all_folder_items = service.get_all_folder_content(folder_id)
-    print(f"All folder content for folder {folder_id}: {all_folder_items}")
-    print(f"Total folder content items: {len(all_folder_items)}")
 if __name__ == "__main__":
-    tests()
+    main()

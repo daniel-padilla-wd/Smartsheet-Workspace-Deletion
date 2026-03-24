@@ -2,9 +2,11 @@
 
 ## Table of Contents
 - [Overview](#overview)
+- [Current Execution Mode](#current-execution-mode)
 - [Architecture](#architecture)
 - [Module Reference](#module-reference)
   - [app.py](#apppy)
+  - [workspace_verification.py](#workspace_verificationpy)
   - [config.py](#configpy)
   - [oauth_handler.py](#oauth_handlerpy)
   - [repository.py](#repositorypy)
@@ -12,925 +14,318 @@
   - [utils.py](#utilspy)
 - [Data Flow](#data-flow)
 - [Error Handling](#error-handling)
+- [Environment Variables](#environment-variables)
+- [AWS Lambda Notes](#aws-lambda-notes)
 
 ## Overview
 
-This application automates the deletion of Smartsheet workspaces based on scheduled deletion dates stored in an intake sheet. It supports both local execution and AWS Lambda deployment with OAuth 2.0 authentication.
+This project automates Smartsheet workspace cleanup based on intake-sheet dates and links.
 
-### Key Features
-- OAuth 2.0 authentication with Smartsheet API
-- Automated workspace deletion based on date criteria
-- Support for local and AWS Lambda environments
-- Token management (local file or AWS Secrets Manager)
-- Comprehensive error handling and logging
-- Status tracking via Smartsheet cell updates
+The current application entrypoint in `app.py` uses a verification-first workflow and imports helper functions from `workspace_verification.py`.
+
+## Current Execution Mode
+
+As implemented today:
+
+- `app.py::main()` runs a verification workflow.
+- It evaluates intake rows, resolves workspace IDs, and determines expected actions.
+- It calls `delete_verified_workspaces(..., safe_mode=True)`, which means destructive API delete actions are not executed.
+- It writes session logs and line-delimited JSON entry exports under `logs/`.
+
+Important behavior notes in the current implementation:
+
+- `main()` does not return a summary dictionary.
+- Validation/authentication failures are logged, but `main()` does not currently fail fast at those checkpoints.
+- The Lambda handler block in `app.py` is currently commented out.
 
 ## Architecture
 
-The application follows a layered architecture:
+The application currently follows this flow:
 
 ```
-┌─────────────────────────────────────┐
-│         app.py (Entry Point)        │
-│   - Lambda Handler                  │
-│   - Local Execution                 │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│    service.py (Business Logic)      │
-│   - WorkspaceDeletionService        │
-│   - Workflow Orchestration          │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│  repository.py (Data Access Layer)  │
-│   - SmartsheetRepository            │
-│   - API Operations                  │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│    oauth_handler.py (Auth Layer)    │
-│   - OAuth Flow Management           │
-│   - Token Storage/Refresh           │
-└─────────────────────────────────────┘
-
-         Supporting Modules:
-┌─────────────────────────────────────┐
-│   config.py (Configuration)         │
-│   utils.py (Utilities)              │
-└─────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│              app.py (Entry Point)           │
+│   - main()                                  │
+│   - Imports verification helpers             │
+└──────────────────────┬───────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────┐
+│      workspace_verification.py (Helpers)     │
+│   - verify_project_status()                  │
+│   - delete_verified_workspaces()             │
+└──────────────────────┬───────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────┐
+│       service.py (Business Logic)            │
+│   - WorkspaceDeletionService                 │
+└──────────────────────┬───────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────┐
+│    repository.py (Smartsheet API Access)     │
+│   - SmartsheetRepository                     │
+└──────────────────────┬───────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────┐
+│        oauth_handler.py (Auth Layer)         │
+│   - OAuth + token lifecycle                  │
+└──────────────────────────────────────────────┘
 ```
+
+Supporting modules:
+
+- `config.py`: Environment-backed settings and validation
+- `utils.py`: Date helpers, filtering, row-log utilities
 
 ## Module Reference
 
 ### app.py
 
-**Purpose:** Application entry point supporting both local and AWS Lambda execution.
+Purpose: Runtime entrypoint for the current verification-first workflow.
 
-#### Functions
+#### `main()`
 
-##### `main()`
-Main execution function for local environment.
+Current process:
 
-**Returns:**
-- `dict`: Summary of workflow execution
+1. Configures logging and file logging output.
+2. Calls `config.validate_oauth_config()`.
+3. Authenticates with `get_smartsheet_client(config.OAUTH_SCOPES)`.
+4. Builds `SmartsheetRepository` and `WorkspaceDeletionService`.
+5. Loads intake sheet and all sheets.
+6. Filters intake rows using `filter_intake_data(..., has_folder_url=True)`.
+7. Verifies rows using `verify_project_status(...)`.
+8. Invokes `delete_verified_workspaces(..., safe_mode=True)`.
+9. Logs summary and exports row entries JSON.
 
-**Process:**
-1. Validates OAuth and sheet configuration
-2. Authenticates via OAuth handler
-3. Initializes repository and service layers
-4. Processes deletion workflow
-5. Returns execution summary
+Current return behavior:
 
-**Example Output:**
-```python
-{
-    "processed_rows": 10,
-    "successful_deletions": 3,
-    "skipped": 7,
-    "errors": []
-}
-```
+- Returns `None` (no explicit return statement).
 
-##### `lambda_handler(event, context)`
-AWS Lambda handler function.
+#### `lambda_handler(event, context)`
 
-**Parameters:**
-- `event`: Lambda event object
-- `context`: Lambda context object
+Status:
 
-**Returns:**
-- `dict`: Response with statusCode and JSON body
+- Present only as commented code in the current file.
+- Not active unless re-enabled.
 
-**Example:**
-```python
-{
-    'statusCode': 200,
-    'body': '{"processed_rows": 10, "successful_deletions": 3, ...}'
-}
-```
+---
+
+### workspace_verification.py
+
+Purpose: Contains reusable verification and deletion-orchestration helper functions used by `app.py`.
+
+#### `verify_project_status(smartsheet_rows_list, todays_date, service, all_sheets)`
+
+- Extracts and validates row data.
+- Resolves workspace IDs from sheet/permalink data.
+- Checks workspace existence.
+- Produces `RowLogEntry` objects with automation actions such as `CONTINUE` and `SKIPPED - ...`.
+
+#### `delete_verified_workspaces(log_entries, repository, service, safe_mode=True)`
+
+- Processes rows marked for continuation and expected deletion.
+- Traverses workspace content and performs delete calls through service/repository.
+- When `safe_mode=True`, delete calls are dry-run style (no destructive action).
+- Updates deletion status via `process_deletion_status_update`.
+
+#### `main()`
+
+- Standalone verification entrypoint that returns a summary dict.
+- Not the runtime entrypoint currently used by `app.py`.
 
 ---
 
 ### config.py
 
-**Purpose:** Centralized configuration management using environment variables.
+Purpose: Centralized configuration and validation from environment variables.
 
-#### Classes
+Key class:
 
-##### `ConfigurationError`
-Exception raised when required configuration is missing or invalid.
+- `Config`
 
-##### `Config`
-Configuration class providing validated access to application settings.
+Key validation methods:
 
-**Attributes:**
+- `validate_oauth_config()`
+- `validate_sheet_config()`
+- `validate_all()`
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `DEV_MODE` | bool | Development mode flag |
-| `CLIENT_ID` | str | OAuth client ID |
-| `CLIENT_SECRET` | str | OAuth client secret |
-| `REDIRECT_URI` | str | OAuth callback URL |
-| `TOKEN_FILE` | str | Local token storage file path |
-| `AUTH_BASE` | str | Smartsheet authorization URL |
-| `TOKEN_URL` | str | Token endpoint URL |
-| `OAUTH_SCOPES` | List[str] | Required OAuth scopes |
-| `S_INTAKE_SHEET_ID` | str | Sandbox intake sheet ID |
-| `INTAKE_SHEET_ID` | str | Production intake sheet ID |
-| `TIMEZONE` | str | Timezone for date operations |
+Notes:
 
-**Column ID Mappings:**
-
-```python
-COLUMN_TITLES = {
-    'folder_url': FOLDER_URL_ID,
-    'deletion_date': DELETION_DATE_ID,
-    'em_notification_date': EM_NOTIFICATION_ID,
-    'deletion_status': DELETION_STATUS_ID,
-}
-```
-
-**Methods:**
-
-##### `validate_oauth_config()`
-Validates OAuth configuration presence.
-
-**Raises:**
-- `ConfigurationError`: If required OAuth settings are missing
-
-##### `validate_sheet_config()`
-Validates sheet configuration presence.
-
-**Raises:**
-- `ConfigurationError`: If required sheet settings are missing
-
-##### `validate_all()`
-Validates all required configuration.
-
-##### `get_summary()`
-Returns configuration summary with masked sensitive values.
-
-**Returns:**
-- `dict`: Configuration summary
+- `CLIENT_ID` and `CLIENT_SECRET` are class attributes loaded at import time.
+- `DEV_MODE` toggles between sandbox and production IDs.
 
 ---
 
 ### oauth_handler.py
 
-**Purpose:** Complete OAuth 2.0 authentication flow management.
+Purpose: OAuth 2.0 flow, token persistence, refresh, and client creation.
 
-#### Classes
+Primary entrypoint:
 
-##### `OAuthCallbackHandler(BaseHTTPRequestHandler)`
-HTTP request handler for OAuth callback server.
+- `get_smartsheet_client(scopes)`
 
-**Class Variables:**
-- `expected_state`: CSRF protection state parameter
-- `auth_code`: Authorization code from OAuth callback
+Behavior summary:
 
-**Methods:**
-- `do_GET()`: Handles OAuth redirect callback
-- `log_message()`: Suppresses HTTP server logging
-
-#### Functions
-
-##### AWS Secrets Manager Functions
-
-##### `get_secret_string(secret_name)`
-Retrieves plain string value from AWS Secrets Manager.
-
-**Parameters:**
-- `secret_name` (str): Secret name in AWS Secrets Manager
-
-**Returns:**
-- `str | None`: Secret value or None if retrieval fails
-
-##### `get_oauth_credentials_from_aws()`
-Retrieves OAuth credentials from AWS Secrets Manager.
-
-**Returns:**
-- `tuple`: (client_id, client_secret) or (None, None)
-
-##### `save_tokens_to_aws(access_token, refresh_token)`
-Saves tokens to AWS Secrets Manager.
-
-**Parameters:**
-- `access_token` (str): Current access token
-- `refresh_token` (str): Current refresh token
-
-**Returns:**
-- `bool`: Success status
-
-**Required IAM Permissions:**
-- `secretsmanager:PutSecretValue`
-- `secretsmanager:CreateSecret`
-
-##### `load_tokens_from_aws()`
-Loads stored tokens from AWS Secrets Manager.
-
-**Returns:**
-- `tuple`: (access_token, refresh_token) or (None, None)
-
-##### OAuth Flow Functions
-
-##### `build_auth_url(scopes, state='state123')`
-Constructs Smartsheet authorization URL.
-
-**Parameters:**
-- `scopes` (List[str] | str): Permission scopes
-- `state` (str): CSRF protection state
-
-**Returns:**
-- `str`: Complete authorization URL
-
-**Example:**
-```python
-url = build_auth_url(['READ_SHEETS', 'DELETE_SHEETS'])
-# Returns: https://app.smartsheet.com/b/authorize?response_type=code&client_id=...
-```
-
-##### `exchange_code_for_tokens(code)`
-Exchanges authorization code for access and refresh tokens.
-
-**Parameters:**
-- `code` (str): Authorization code from OAuth callback
-
-**Returns:**
-- `dict`: Token response
-
-**Example Response:**
-```python
-{
-    "access_token": "abc123...",
-    "refresh_token": "xyz789...",
-    "token_type": "bearer",
-    "expires_in": 604800
-}
-```
-
-##### `refresh_tokens(refresh_token)`
-Obtains new access token using refresh token.
-
-**Parameters:**
-- `refresh_token` (str): Valid refresh token
-
-**Returns:**
-- `dict`: Token response with new tokens
-
-##### Token Storage Functions
-
-##### `save_tokens(access_token, refresh_token)`
-Saves tokens to appropriate storage (AWS or local file).
-
-**Parameters:**
-- `access_token` (str): Current access token
-- `refresh_token` (str): Current refresh token
-
-**Returns:**
-- `bool`: Success status
-
-**Behavior:**
-- **AWS Lambda**: Saves to AWS Secrets Manager
-- **Local**: Saves to JSON file specified in config
-
-##### `load_tokens()`
-Loads stored tokens from appropriate storage.
-
-**Returns:**
-- `tuple`: (access_token, refresh_token) or (None, None)
-
-##### Client Management Functions
-
-##### `create_smartsheet_client(access_token)`
-Creates authenticated Smartsheet client.
-
-**Parameters:**
-- `access_token` (str): Valid access token
-
-**Returns:**
-- `smartsheet.Smartsheet`: Authenticated client instance
-
-##### `validate_client(client)`
-Validates that a client has working access token.
-
-**Parameters:**
-- `client`: Smartsheet client instance
-
-**Returns:**
-- `bool`: True if valid, False only for auth errors (401/403)
-
-**Note:** Non-authentication errors (network issues, etc.) return True to avoid refresh loops.
-
-##### `run_oauth_flow(scopes)`
-Runs complete OAuth authorization flow with local callback server.
-
-**Parameters:**
-- `scopes` (List[str]): Required permission scopes
-
-**Returns:**
-- `str | None`: Authorization code or None
-
-**Process:**
-1. Generates CSRF state token
-2. Opens browser to authorization URL
-3. Starts local HTTP server for callback
-4. Waits for authorization code
-5. Falls back to manual input if needed
-
-##### `get_smartsheet_client(scopes)`
-**Main entry point** for authentication.
-
-**Parameters:**
-- `scopes` (List[str]): Required permission scopes
-
-**Returns:**
-- `smartsheet.Smartsheet | None`: Authenticated client or None
-
-**Process:**
-1. Tries to use existing saved tokens
-2. Refreshes token if expired
-3. Runs new OAuth flow if no valid tokens exist
-
-**Example:**
-```python
-from oauth_handler import get_smartsheet_client
-from config import config
-
-client = get_smartsheet_client(config.OAUTH_SCOPES)
-if client:
-    current_user = client.Users.get_current_user()
-    print(f"Authenticated as: {current_user.email}")
-```
+1. Load existing tokens (local/AWS).
+2. Validate token.
+3. Refresh token when needed.
+4. Run full OAuth flow if needed.
 
 ---
 
 ### repository.py
 
-**Purpose:** Encapsulates all Smartsheet API interactions.
+Purpose: Encapsulates Smartsheet SDK/API operations.
 
-#### Classes
+Primary class:
 
-##### `SmartsheetAPIError`
-Exception raised when Smartsheet API operation fails.
+- `SmartsheetRepository`
 
-##### `SmartsheetRepository`
-Repository for Smartsheet API operations.
+Representative methods:
 
-**Constructor:**
-```python
-def __init__(self, client):
-    """
-    Args:
-        client: Authenticated Smartsheet client instance
-    """
-```
-
-**Methods:**
-
-##### `list_all_sheets()`
-Retrieves all sheets from Smartsheet.
-
-**Returns:**
-- `List[Any]`: List of sheet objects
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails
-
-##### `list_workspaces()`
-Retrieves all workspaces from Smartsheet.
-
-**Returns:**
-- `List[Any]`: List of workspace objects
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails
-
-##### `delete_workspace(workspace_id)`
-Deletes a workspace by ID.
-
-**Parameters:**
-- `workspace_id` (int): Workspace ID to delete
-
-**Returns:**
-- `bool`: True if successful, False otherwise
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails with unexpected error
-
-**Example:**
-```python
-success = repository.delete_workspace(1234567890)
-if success:
-    print("Workspace deleted successfully")
-```
-
-##### `get_sheet(sheet_id)`
-Retrieves a sheet by ID.
-
-**Parameters:**
-- `sheet_id` (int): Sheet ID to retrieve
-
-**Returns:**
-- Sheet object with rows and metadata
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails
-
-##### `get_columns(sheet_id)`
-Retrieves all columns from a sheet.
-
-**Parameters:**
-- `sheet_id` (int): Sheet ID
-
-**Returns:**
-- `List[Any]`: List of column objects
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails
-
-##### `update_cell(sheet_id, row_id, column_id, new_value)`
-Updates a specific cell in a sheet.
-
-**Parameters:**
-- `sheet_id` (int): Sheet ID
-- `row_id` (int): Row ID
-- `column_id` (int): Column ID
-- `new_value` (str): New cell value
-
-**Returns:**
-- `bool`: True if successful, False otherwise
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails
-
-**Example:**
-```python
-repository.update_cell(
-    sheet_id=123456,
-    row_id=789012,
-    column_id=345678,
-    new_value="Deleted"
-)
-```
-
-##### `get_current_user()`
-Gets information about current authenticated user.
-
-**Returns:**
-- User object
-
-**Raises:**
-- `SmartsheetAPIError`: If API call fails
+- `get_sheet(sheet_id)`
+- `list_all_sheets()`
+- `get_workspace(workspace_id)`
+- `get_all_workspace_children(workspace_id)`
+- `delete_workspace(workspace_id, safe_mode=True)`
+- `update_cell(...)`
 
 ---
 
 ### service.py
 
-**Purpose:** Business logic for workspace deletion workflow.
+Purpose: Business logic for workspace resolution, validation, and deletion orchestration.
 
-#### Classes
+Primary class:
 
-##### `WorkspaceDeletionError`
-Exception raised when deletion process encounters an error.
+- `WorkspaceDeletionService`
 
-##### `WorkspaceDeletionService`
-Service for managing workspace deletion workflow.
+Key methods used by current workflow:
 
-**Constructor:**
-```python
-def __init__(self, repository: SmartsheetRepository):
-    """
-    Args:
-        repository: SmartsheetRepository instance for data access
-    """
-```
-
-**Methods:**
-
-##### `find_workspace_by_permalink(permalink)`
-Finds workspace ID by matching permalink pattern.
-
-**Parameters:**
-- `permalink` (str): Permalink URL to search for
-
-**Returns:**
-- `int | None`: Workspace ID if found, None otherwise
-
-**Example:**
-```python
-workspace_id = service.find_workspace_by_permalink(
-    "https://app.smartsheet.com/workspaces/abc123"
-)
-```
-
-##### `find_sheet_by_permalink(permalink)`
-Finds sheet ID by matching permalink pattern.
-
-**Parameters:**
-- `permalink` (str): Permalink URL to search for
-
-**Returns:**
-- `int | None`: Sheet ID if found, None otherwise
-
-##### `get_parent_workspace_id_from_sheet(permalink)`
-Gets parent workspace ID for a given sheet permalink.
-
-**Parameters:**
-- `permalink` (str): Sheet permalink URL
-
-**Returns:**
-- `int | None`: Parent workspace ID or None
-
-**Process:**
-1. Cleans permalink (removes query parameters)
-2. Finds sheet by permalink
-3. Retrieves sheet data
-4. Extracts parent workspace ID
-
-**Example:**
-```python
-workspace_id = service.get_parent_workspace_id_from_sheet(
-    "https://app.smartsheet.com/sheets/xyz789?param=value"
-)
-```
-
-##### `extract_row_data_with_column_ids(row, folder_url_col_id, deletion_date_col_id, em_notification_col_id, status_col_id)`
-Extracts relevant data from a row using specific column IDs.
-
-**Parameters:**
-- `row` (Any): Row object from Smartsheet
-- `folder_url_col_id` (int): Column ID for folder URL
-- `deletion_date_col_id` (int): Column ID for deletion date
-- `em_notification_col_id` (int): Column ID for EM notification date
-- `status_col_id` (int): Column ID for deletion status
-
-**Returns:**
-- `Dict[str, Any]`: Extracted row data
-
-**Example Output:**
-```python
-{
-    "row_id": 123456,
-    "folder_url": "https://app.smartsheet.com/sheets/...",
-    "deletion_date": "2026-01-15",
-    "em_notification_date": "2026-01-10",
-    "deletion_status": "Pending"
-}
-```
-
-##### `process_deletion_workflow(sheet_url)`
-**Main orchestration method** for workspace deletion workflow.
-
-**Parameters:**
-- `sheet_url` (str): URL of intake sheet
-
-**Returns:**
-- `Dict[str, Any]`: Processing summary
-
-**Process:**
-1. Finds sheet by URL
-2. Gets column IDs from config
-3. Processes each row:
-   - Extracts row data
-   - Checks deletion criteria
-   - Gets workspace ID from folder URL
-   - Deletes workspace
-   - Updates status cell
-4. Returns summary
-
-**Example Output:**
-```python
-{
-    "processed_rows": 15,
-    "successful_deletions": 5,
-    "skipped": 10,
-    "errors": [
-        {
-            "row_index": 3,
-            "row_id": 789012,
-            "error": "Failed to get workspace ID"
-        }
-    ]
-}
-```
-
-**Example Usage:**
-```python
-service = WorkspaceDeletionService(repository)
-summary = service.process_deletion_workflow(
-    "https://app.smartsheet.com/sheets/intake123"
-)
-print(f"Deleted {summary['successful_deletions']} workspaces")
-```
-
-##### `extract_row_data(row, column_ids)`
-Extracts relevant data from a sheet row.
-
-**Parameters:**
-- `row` (Any): Row object from Smartsheet
-- `column_ids` (Dict[str, int]): Mapping of logical names to column IDs
-
-**Returns:**
-- `Dict[str, Any]`: Extracted row data
-
-##### `process_intake_row(sheet_id, row, column_ids)`
-Processes a single row to determine if workspace should be deleted.
-
-**Parameters:**
-- `sheet_id` (int): Sheet ID being processed
-- `row` (Any): Row object to process
-- `column_ids` (Dict[str, int]): Mapping of logical names to column IDs
-
-**Returns:**
-- `bool`: True if processed successfully, False otherwise
-
-**Process:**
-1. Extracts row data
-2. Checks deletion criteria
-3. Finds workspace by permalink
-4. Deletes workspace
-5. Updates row status
+- `extract_row_data(row)`
+- `process_row_for_checks(smartsheet_row, extracted_row_data, all_sheets)`
+- `process_workspace_id_resolution(smartsheet_row, extracted_row_data, all_sheets)`
+- `process_workspace_existence(smartsheet_row, workspace_id)`
+- `get_all_workspace_content(workspace_id)`
+- `delete_all_workspace_content(all_workspace_content, safe_mode=True)`
+- `process_deletion_status_update(entry, safe_mode=True)`
 
 ---
 
 ### utils.py
 
-**Purpose:** Pure utility functions for date handling and string operations.
+Purpose: Utility and helper functions for date handling, filtering, and structured row logging.
 
-#### Functions
+Commonly used in current flow:
 
-##### `get_pacific_today_date()`
-Returns today's date in configured timezone.
-
-**Returns:**
-- `str | None`: Formatted date string (YYYY-MM-DD) or None if error
-
-**Example:**
-```python
-date = get_pacific_today_date()
-# Returns: "2026-01-05"
-```
-
-**Note:** Uses `config.TIMEZONE` (defaults to 'America/Los_Angeles')
-
-##### `is_date_past_or_today(date_string, todays_date)`
-Compares a date string to today's date.
-
-**Parameters:**
-- `date_string` (str): Date to compare (YYYY-MM-DD)
-- `todays_date` (str): Today's date (YYYY-MM-DD)
-
-**Returns:**
-- `bool`: True if date_string is on or before today
-
-**Example:**
-```python
-is_past = is_date_past_or_today("2026-01-01", "2026-01-05")
-# Returns: True
-```
-
-##### `should_workspace_be_deleted(em_notification_date, deletion_date, todays_date)`
-Determines if workspace should be deleted based on dates.
-
-**Business Logic:**
-- Workspace should be deleted if:
-  - Today is on or after deletion date AND
-  - Today is NOT the EM notification date
-
-**Parameters:**
-- `em_notification_date` (str): EM notification date (YYYY-MM-DD)
-- `deletion_date` (str): Deletion date (YYYY-MM-DD)
-- `todays_date` (str): Today's date (YYYY-MM-DD)
-
-**Returns:**
-- `bool`: True if workspace should be deleted
-
-**Example:**
-```python
-should_delete = should_workspace_be_deleted(
-    em_notification_date="2026-01-03",
-    deletion_date="2026-01-05",
-    todays_date="2026-01-05"
-)
-# Returns: True (today is deletion date and not EM notification date)
-```
-
-##### `is_pattern_substring(string_a, string_b, pattern)`
-Checks if a pattern substring from string_a is present in string_b.
-
-**Parameters:**
-- `string_a` (str): String containing pattern (e.g., 'path/to/sheets/dev*')
-- `string_b` (str): String to search within
-- `pattern` (str): Pattern to match (e.g., 'sheets')
-
-**Returns:**
-- `bool`: True if pattern found and matches
-
-**Example:**
-```python
-matches = is_pattern_substring(
-    "https://app.smartsheet.com/sheets/abc123*",
-    "https://app.smartsheet.com/sheets/abc123def",
-    "sheets"
-)
-# Returns: True
-```
-
-##### `is_workspaces_substring(string_a, string_b)`
-Checks if 'workspaces/*' substring from string_a is in string_b.
-
-**Parameters:**
-- `string_a` (str): String containing pattern (e.g., 'path/to/workspaces/dev*')
-- `string_b` (str): String to search within
-
-**Returns:**
-- `bool`: True if workspaces pattern matches
-
-**Example:**
-```python
-matches = is_workspaces_substring(
-    "https://app.smartsheet.com/workspaces/project1*",
-    "https://app.smartsheet.com/workspaces/project1/folder"
-)
-# Returns: True
-```
-
-##### `get_key_from_value(dictionary, value_to_find)`
-Searches dictionary for value and returns first matching key.
-
-**Parameters:**
-- `dictionary` (dict): Dictionary to search
-- `value_to_find`: Value to look for
-
-**Returns:**
-- `str | None`: Key corresponding to value, or None if not found
-
-**Example:**
-```python
-key = get_key_from_value(
-    {"name": "John", "age": 30},
-    30
-)
-# Returns: "age"
-```
-
-##### `remove_query_string(string)`
-Removes query string portion from URL.
-
-**Parameters:**
-- `string` (str): String to clean (URL with query parameters)
-
-**Returns:**
-- `str`: Cleaned string without query parameters
-
-**Example:**
-```python
-clean_url = remove_query_string(
-    "https://example.com/path?param=value&other=123"
-)
-# Returns: "https://example.com/path"
-```
+- `get_pacific_today_date()`
+- `setup_file_logging(log_name_prefix)`
+- `filter_intake_data(sheet, todays_date, has_folder_url=True)`
+- `get_expected_action(deletion_date, em_notification_date, todays_date)`
+- `RowLogEntry`
+- `log_row_entry(...)`
 
 ## Data Flow
 
-### Complete Workflow
+### Current Runtime Flow (`app.py::main`)
 
 ```
-1. Application Start (app.py)
-   ↓
-2. Validate Configuration (config.py)
-   ↓
-3. Authenticate (oauth_handler.py)
-   - Load existing tokens
-   - Refresh if expired
-   - Run OAuth flow if needed
-   ↓
-4. Initialize Services
-   - Create SmartsheetRepository
-   - Create WorkspaceDeletionService
-   ↓
-5. Process Deletion Workflow (service.py)
-   - Find intake sheet
-   - Get sheet data
-   - For each row:
-     a. Extract row data
-     b. Check deletion criteria (utils.py)
-     c. Get workspace ID from folder URL
-     d. Delete workspace (repository.py)
-     e. Update status cell (repository.py)
-   ↓
-6. Return Summary
+1. Start app.py main
+2. Configure logging + file logger
+3. Validate OAuth config
+4. Authenticate client
+5. Create repository/service
+6. Load intake sheet + list all sheets
+7. Resolve Pacific date
+8. Filter intake rows
+9. verify_project_status(...)
+10. delete_verified_workspaces(..., safe_mode=True)
+11. Write summary logs
+12. Export row entries JSON (logs/*_entries.json)
 ```
 
-### Deletion Criteria Decision Tree
+### Decision Logic (Per Row)
 
-```
-Row Data
-  ↓
-Has deletion_date AND em_notification_date?
-  ├─ No → Skip row
-  └─ Yes
-      ↓
-  Is today >= deletion_date?
-      ├─ No → Skip row
-      └─ Yes
-          ↓
-      Is today == em_notification_date?
-          ├─ Yes → Skip row (EM notification day)
-          └─ No → DELETE WORKSPACE
+```mermaid
+flowchart LR
+    %% Nodes
+    Start([Start])
+    IntakeSheet[/Intake Sheet/]
+    GetNextRow(Get Next Row)
+    CheckDate{Is Date <= <br>Today?}
+    ExtractSheetID(Extract Sheet ID from Link)
+    GetWorkspaceID(Get Parent Workspace ID)
+    VerifyWorkspace{Verify Workspace <br>Existence}
+    DeleteWorkspace(Delete <br>Workspace)
+    EndNode([END])
+
+    %% Connections
+    Start --> IntakeSheet
+    IntakeSheet --> GetNextRow
+    
+    GetNextRow -- "Yes, there is a next row" --> CheckDate
+    GetNextRow -- "No, all rows processed" --> EndNode
+    
+    CheckDate -- "No" --> GetNextRow
+    CheckDate -- "Yes" --> ExtractSheetID
+    
+    ExtractSheetID --> GetWorkspaceID
+    GetWorkspaceID --> VerifyWorkspace
+    
+    VerifyWorkspace -- "Doesn't Exist" --> GetNextRow
+    VerifyWorkspace -- "Exists" --> DeleteWorkspace
+
+    %% Styling
+    classDef greenFill fill:#a8e6b3,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef yellowFill fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000
+    classDef blueFill fill:#d0e1fd,stroke:#1565c0,stroke-width:2px,color:#000
+
+    class Start,EndNode greenFill
+    class IntakeSheet,GetNextRow,ExtractSheetID,GetWorkspaceID,DeleteWorkspace yellowFill
+    class CheckDate,VerifyWorkspace blueFill
 ```
 
 ## Error Handling
 
-### Exception Hierarchy
+### Exception Types
 
-```
-Exception
-├─ ConfigurationError (config.py)
-│   └─ Missing or invalid configuration
-├─ SmartsheetAPIError (repository.py)
-│   └─ API operation failures
-└─ WorkspaceDeletionError (service.py)
-    └─ Deletion process errors
-```
+- `ConfigurationError` in `config.py`
+- `SmartsheetAPIError` in `repository.py`
+- `WorkspaceDeletionError` in `service.py`
 
-### Error Handling Strategies
+### Current Strategy
 
-#### 1. Configuration Errors
-- **When:** Missing environment variables
-- **Action:** Fail fast, log error, return error response
-- **Recovery:** None - requires configuration fix
-
-#### 2. Authentication Errors
-- **When:** OAuth failures, token expiration
-- **Action:** Attempt token refresh, run new OAuth flow if needed
-- **Recovery:** Automatic via token refresh or re-authentication
-
-#### 3. API Errors
-- **When:** Smartsheet API calls fail
-- **Action:** Log error, raise SmartsheetAPIError
-- **Recovery:** Depends on error type (401/403 triggers re-auth)
-
-#### 4. Row Processing Errors
-- **When:** Individual row processing fails
-- **Action:** Log error, add to errors list, continue processing
-- **Recovery:** Continue with next row
-
-### Logging Levels
-
-| Level | Usage |
-|-------|-------|
-| ERROR | Critical failures, API errors, missing config |
-| WARNING | Non-critical issues, fallback behaviors |
-| INFO | Workflow progress, successful operations |
-| DEBUG | Detailed flow information, skipped rows |
-
-### Example Error Response
-
-```python
-{
-    "error": "Configuration error: Missing required OAuth configuration",
-    "summary": {
-        "processed_rows": 0,
-        "successful_deletions": 0,
-        "skipped": 0,
-        "errors": []
-    }
-}
-```
+- Row-level processing errors are logged and processing continues for other rows.
+- Configuration/authentication/date failures are logged in `app.py`.
+- `workspace_verification.py::main()` returns structured error payloads.
+- `app.py::main()` currently logs errors but does not return a structured error payload.
 
 ## Environment Variables
 
 ### Required
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `S_APP_CLIENT_ID` | Smartsheet OAuth client ID (dev) | `abc123...` |
-| `S_APP_SECRET` | Smartsheet OAuth client secret (dev) | `xyz789...` |
-| `APP_CLIENT_ID` | Smartsheet OAuth client ID (prod) | `abc123...` |
-| `APP_SECRET` | Smartsheet OAuth client secret (prod) | `xyz789...` |
+| Variable | Description |
+|----------|-------------|
+| `APP_CLIENT_ID` | Smartsheet OAuth client ID (prod mode) |
+| `APP_SECRET` | Smartsheet OAuth client secret (prod mode) |
+| `S_APP_CLIENT_ID` | Smartsheet OAuth client ID (dev mode) |
+| `S_APP_SECRET` | Smartsheet OAuth client secret (dev mode) |
 
 ### Optional
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `REDIRECT_URI` | OAuth callback URL | `http://localhost:8080/callback` |
-| `TOKEN_FILE` | Local token storage file | `smartsheet_token.json` |
-| `LOG_LEVEL` | Logging level | `INFO` |
-| `TIMEZONE` | Timezone for dates | `America/Los_Angeles` |
+| `TOKEN_FILE` | Local token file | `smartsheet_token.json` |
+| `FILE_LOGGING_LEVEL` | File log level | `DEBUG` |
+| `CONSOLE_LOGGING_LEVEL` | Console log level | `INFO` |
+| `TIMEZONE` | Date timezone | `America/Los_Angeles` |
+| `INTAKE_SHEET_ID` | Production intake sheet ID | `0` if unset |
 
-## AWS Lambda Deployment
+## AWS Lambda Notes
 
-### Environment Detection
-
-The application automatically detects AWS Lambda environment via:
-```python
-IS_AWS_LAMBDA = (
-    os.getenv('AWS_LAMBDA_FUNCTION_NAME') is not None or 
-    os.getenv('AWS_EXECUTION_ENV') is not None
-)
-```
+- OAuth/token support for AWS is implemented in `oauth_handler.py`.
+- The runtime Lambda handler in `app.py` is currently commented out.
+- To use Lambda from `app.py`, re-enable `lambda_handler` and ensure it returns a serializable summary payload.
 
 ### Token Storage in Lambda
 

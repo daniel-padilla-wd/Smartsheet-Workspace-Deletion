@@ -1,88 +1,172 @@
-# Smartsheet-Workspace-Deletion
+# Smartsheet Workspace Deletion
 
-### About this script
+Automation project for verifying and processing Smartsheet workspace deletion using OAuth authentication and intake-sheet metadata.
 
-This Python script automates the deletion of Smartsheet workspaces based on data from a designated "Mega Intake" sheet. It identifies workspaces scheduled for deletion and marks them as "Deleted" in the sheet after a successful removal.
+## Overview
 
------
+The current implementation is verification-first:
 
-### ⚙️ How It Works
+- Reads intake sheet rows.
+- Resolves linked sheet and parent workspace context.
+- Determines whether each row should continue to deletion processing.
+- Runs deletion operations in `safe_mode=True` from the app entrypoint, so destructive actions are not executed by default.
+- Logs results and exports row-level entries for auditing.
 
-The script performs the following steps:
+Project modules live under `app/`.
 
-1.  **Authentication**: It uses a Smartsheet API access token and a sheet ID from a `.env` file to connect to your Smartsheet account.
-2.  **Date Check**: It fetches today's date in the Pacific Time Zone.
-3.  **Row Processing**: It iterates through each row in the specified "Mega Intake" sheet.
-4.  **Deletion Logic**: For each row, it checks two key dates:
-      * **Deletion Date**: The script verifies if the designated deletion date for a workspace has passed or is today.
-      * **EM Notification Date**: It ensures that today is not also the day when the project manager (EM) was notified. This prevents accidental deletion on the same day as the notification is sent.
-5.  **Workspace Deletion**: If both conditions are met, the script extracts the workspace ID from the permalink, and then initiates the deletion process.
-6.  **Status Update**: After a successful deletion, it updates the "Status" column for that row in the Smartsheet to "Deleted."
+## Current Entrypoints
 
------
+- Primary runtime entrypoint: `app/app.py` (`main()`)
 
-### 🚀 Getting Started
+For implementation-level API documentation, see `app/README.md`.
 
-#### Prerequisites
+## High-Level Flow
 
-  * **Python**: Version 3.8 or higher.
-  * **Smartsheet API Access Token**: You'll need a personal access token with **Admin** permissions to delete workspaces. You can generate one from your Smartsheet account settings.
-  * **Smartsheet Sheet ID**: The ID of the sheet you'll be using as your intake list.
-  * **Required Columns**: Your intake sheet must contain columns with the following titles to work correctly:
-      * `Delete Date` (or similar, mapped to `column_titles[1]` in the code)
-      * `EM Notification of Deletion Date` (mapped to `column_titles[2]`)
-      * `Workspaces` (This column should contain the Smartsheet permalink, mapped to `column_titles[3]`)
-      * `Status` (mapped to `column_titles[4]`)
+### Application Initialization
 
-#### Installation
+1. Validate OAuth configuration.
+2. Authenticate with Smartsheet via OAuth token lifecycle.
+3. Initialize repository and service layers.
+4. Load intake sheet and sheet catalog.
+5. Filter rows eligible for evaluation.
 
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/your-username/your-repo-name.git
-    cd your-repo-name
-    ```
-2.  **Install dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    This assumes you have a `requirements.txt` file. If not, you can create one with the following contents:
-    ```
-    requests
-    smartsheet-python-sdk
-    python-dotenv
-    ```
+### Per-Row Processing Decision Logic
+Note: 
+- This is an abstracted view of the workflow. Please review the code for a comprehensive understanding. 
+- You can copy-paste the block below into Miro > Diagram > Flowchart to generate a visual 
 
-#### Configuration
 
-Create a `.env` file in the root directory of your project with the following variables:
+```mermaid
+flowchart LR
+    %% Nodes
+    Start([Start])
+    IntakeSheet[/Intake Sheet/]
+    GetNextRow(Get Next Row)
+    CheckDate{Is Date <= <br>Today?}
+    ExtractSheetID(Extract Sheet ID from Link)
+    GetWorkspaceID(Get Parent Workspace ID)
+    VerifyWorkspace{Verify Workspace <br>Existence}
+    DeleteWorkspace(Delete <br>Workspace)
+    EndNode([END])
 
+    %% Connections
+    Start --> IntakeSheet
+    IntakeSheet --> GetNextRow
+    
+    GetNextRow -- "Yes, there is a next row" --> CheckDate
+    GetNextRow -- "No, all rows processed" --> EndNode
+    
+    CheckDate -- "No" --> GetNextRow
+    CheckDate -- "Yes" --> ExtractSheetID
+    
+    ExtractSheetID --> GetWorkspaceID
+    GetWorkspaceID --> VerifyWorkspace
+    
+    VerifyWorkspace -- "Doesn't Exist" --> GetNextRow
+    VerifyWorkspace -- "Exists" --> DeleteWorkspace
+
+    %% Styling
+    classDef greenFill fill:#a8e6b3,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef yellowFill fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000
+    classDef blueFill fill:#d0e1fd,stroke:#1565c0,stroke-width:2px,color:#000
+
+    class Start,EndNode greenFill
+    class IntakeSheet,GetNextRow,ExtractSheetID,GetWorkspaceID,DeleteWorkspace yellowFill
+    class CheckDate,VerifyWorkspace blueFill
 ```
-SMARTSHEET_ACCESS_TOKEN="YOUR_API_ACCESS_TOKEN"
-MEGA_SHEET_ID="YOUR_SHEET_ID"
-COLUMN_TITLES="Primary Column Title,Delete Date,EM Notification of Deletion Date,Workspaces,Status"
-```
 
-  * **SMARTSHEET\_ACCESS\_TOKEN**: Your personal Smartsheet API token.
-  * **MEGA\_SHEET\_ID**: The ID of your intake sheet.
-  * **COLUMN\_TITLES**: A comma-separated list of the exact column titles in your sheet, in the correct order.
+### Finalization
 
------
+6. Export logs and row-level JSON entries.
 
-### 🏃 How to Run
+## Prerequisites
 
-Simply execute the script from your terminal:
+- Python 3.10+
+- OAuth app credentials for Smartsheet
+- Access to the intake sheet and relevant workspace/sheet resources
+
+## Installation
 
 ```bash
-python your_script_name.py
+pip install -r requirements.txt
 ```
 
-The script will log its progress, including which rows it's processing and whether it's performing a deletion. The deletion step is currently commented out for safety (`#delete_workspace(workspace_to_delete)`). **To enable deletion, remove the `#` before this line.**
+## Configuration
 
------
+Configuration is managed in `app/config.py` using environment variables.
 
-### ⚠️ Important Notes
+Required OAuth variables (depending on mode):
 
-  * **Backup**: Deleting a Smartsheet workspace is permanent. It's highly recommended to back up any critical data before running this script.
-  * **Permissions**: The API token must have sufficient permissions to list workspaces, get sheet data, and delete workspaces.
-  * **Logging**: The script uses Python's `logging` module to provide detailed output on its progress and any errors encountered. Review the log output to monitor its execution.
-  * **User Experience**: When a user clicks on a link of a deleted workspace, the user is redirected to a "You don't have permission to access this workspace" splash page.  Unfortunately, this is expected per Smartsheet team. Due to this experience, the user may assume the workspace still exists.
+- `APP_CLIENT_ID`
+- `APP_SECRET`
+- `S_APP_CLIENT_ID`
+- `S_APP_SECRET`
+
+Common optional variables:
+
+- `REDIRECT_URI`
+- `TOKEN_FILE`
+- `TIMEZONE`
+- `FILE_LOGGING_LEVEL`
+- `CONSOLE_LOGGING_LEVEL`
+- `INTAKE_SHEET_ID`
+
+## Run
+
+From repository root:
+
+```bash
+python3 app/app.py
+```
+
+## Logging and Output
+
+- Session logs are written under `logs/`.
+- Row-level audit entries are exported as line-delimited JSON (`*_entries.json`).
+
+## Safety Notes
+
+- Deleting Smartsheet assets is irreversible.
+- Current app flow uses safe mode for delete operations by default.
+- Confirm behavior in `app/app.py` before enabling destructive runs.
+
+## AWS Lambda Notes
+
+- OAuth/token support for AWS is implemented in `app/oauth_handler.py`.
+- The runtime Lambda handler in `app/app.py` is currently commented out.
+- To use Lambda from `app/app.py`, re-enable `lambda_handler` and ensure it returns a serializable summary payload.
+
+### Token Storage in Lambda
+
+- **Development/Testing:** Use local file storage
+- **Production:** Use AWS Secrets Manager
+
+### Required AWS Secrets
+
+| Secret Name | Content |
+|-------------|---------|
+| `ausw2p-smgr-smt-access-token-001` | Access token (plain string) |
+| `ausw2p-smgr-smt-refresh-token-002` | Refresh token (plain string) |
+| `ausw2p-smgr-smt-client-id-003` | JSON: `{"CLIENT_ID": "..."}` |
+| `ausw2p-smgr-smt-client-secret-004` | JSON: `{"CLIENT_SECRET": "..."}` |
+
+### Required IAM Permissions
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:CreateSecret"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:ausw2p-smgr-smt-*"
+      ]
+    }
+  ]
+}
+```

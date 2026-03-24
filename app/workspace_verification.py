@@ -14,13 +14,6 @@ from typing import Any, Dict
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
 from smartsheet.models.row import Row as SmartsheetRow
 
-
-# Reuse existing app modules that live in ./app with local-style imports.
-ROOT_DIR = Path(__file__).resolve().parent
-APP_DIR = ROOT_DIR / "app"
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
-
 from config import config, ConfigurationError  
 from oauth_handler import get_smartsheet_client  
 from repository import SmartsheetRepository  
@@ -32,8 +25,6 @@ from utils import (
     log_row_entry,
     get_expected_action,
     filter_intake_data,
-    get_hyperlink_from_cell,
-    validate_complete_cell_values
 )
 
 def verify_project_status(
@@ -83,6 +74,9 @@ def verify_project_status(
 
             try:
                 workspace_id = workspace_id_resolution.workspace_id
+                if not workspace_id:
+                    logging.warning(f"Row {getattr(smartsheet_row, 'row_number', 'N/A')}: No workspace ID resolved, skipping workspace existence check.")
+                    continue
                 workspace_exists = service.process_workspace_existence(smartsheet_row, workspace_id)
                 if workspace_exists.automation_action.startswith("SKIPPED"):
                     log_row_entry(workspace_exists)
@@ -132,6 +126,15 @@ def delete_verified_workspaces(log_entries: list[RowLogEntry], repository: Smart
     """
     if type(safe_mode) is not bool:
         raise ValueError(f"read_only parameter must be of type bool. Received type {type(safe_mode)} with value {safe_mode}")
+    
+    for entry in log_entries:
+        if entry.automation_action.startswith("SKIPPED"):
+            logging.debug(f"Row {entry.row_index}: Skipping deletion operations as automation action is '{entry.automation_action}'")
+            log_entries.pop(log_entries.index(entry))
+
+    logging.info(f"Beginning deletion operations for workspaces scheduled to be deleted. Expected number of workspaces to delete: {len(log_entries)}")
+
+
     deleted_log_entries: list[RowLogEntry] = []
     for entry in log_entries:
         if entry.workspace_id is None:

@@ -8,10 +8,25 @@ It provides a centralized place for all application settings.
 import os
 from dotenv import load_dotenv
 from typing import List, Optional
-
+from oauth_handler import get_oauth_credentials_from_aws
 # Load environment variables from .env file
 load_dotenv()
 
+
+def get_app_client_and_secret() -> (str, str):
+    """
+    Retrieve the appropriate client ID and secret based on the environment.
+    
+    Returns:
+        tuple: (client_id, client_secret)
+    """
+    if Config.PRODUCTION and Config.LINUX_SERVER:
+        aws_client_id, aws_client_secret = get_oauth_credentials_from_aws()
+        return aws_client_id or os.getenv('APP_CLIENT_ID', ''), aws_client_secret or os.getenv('APP_SECRET', '')
+    elif Config.PRODUCTION:
+        return os.getenv('APP_CLIENT_ID', ''), os.getenv('APP_SECRET', '')
+    else:
+        return os.getenv('S_APP_CLIENT_ID', ''), os.getenv('S_APP_SECRET', '')
 
 class ConfigurationError(Exception):
     """Raised when required configuration is missing or invalid."""
@@ -26,14 +41,29 @@ class Config:
     required by the application.
     """
     # Mode
-    DEV_MODE = False
+    PRODUCTION = False
+
+    # Toggle this flag if you're running in the linux server. 
+    # At this time (4/2), the windows server likely cannot read AWS Secrets. 
+    LINUX_SERVER = False
+
     
+    if PRODUCTION and LINUX_SERVER:
+        aws_client_id, aws_client_secret = get_oauth_credentials_from_aws()
+        APP_CLIENT_ID = aws_client_id or os.getenv('APP_CLIENT_ID', '')
+        APP_SECRET = aws_client_secret or os.getenv('APP_SECRET', '')
+    elif PRODUCTION:
+        APP_CLIENT_ID = os.getenv('APP_CLIENT_ID', '')
+        APP_SECRET = os.getenv('APP_SECRET', '')
+    else:
+        APP_CLIENT_ID = os.getenv('S_APP_CLIENT_ID', '')
+        APP_SECRET = os.getenv('S_APP_SECRET', '')
+
     # OAuth Configuration
-    CLIENT_ID: str = os.getenv('S_APP_CLIENT_ID', '') if DEV_MODE else os.getenv('APP_CLIENT_ID', '')
-    CLIENT_SECRET: str = os.getenv('S_APP_SECRET', '') if DEV_MODE else os.getenv('APP_SECRET', '')
-    REDIRECT_URI: str = os.getenv('REDIRECT_URI', 'http://localhost:8080/callback')
-    TOKEN_FILE: str = os.getenv('TOKEN_FILE', 'smartsheet_token.json')
-    PROD_TEST_SHEET: str = os.getenv('PROD_TEST_SHEET', '')
+    CLIENT_ID: str = APP_CLIENT_ID
+    CLIENT_SECRET: str = APP_SECRET
+    REDIRECT_URI: str = 'http://localhost:8080/callback'
+    TOKEN_FILE: str = 'smartsheet_token.json'
     
     # Smartsheet OAuth Endpoints
     AUTH_BASE: str = 'https://app.smartsheet.com/b/authorize'
@@ -69,10 +99,10 @@ class Config:
 
     # Column Titles Mapping
     COLUMN_TITLES: dict = {
-        'folder_url': FOLDER_URL_ID if not DEV_MODE else S_FOLDER_URL_ID,
-        'deletion_date': DELETION_DATE_ID if not DEV_MODE else S_DELETION_DATE_ID,
-        'em_notification_date': EM_NOTIFICATION_ID if not DEV_MODE else S_EM_NOTIFICATION_ID,
-        'deletion_status': DELETION_STATUS_ID if not DEV_MODE else S_DELETION_STATUS_ID,
+        'folder_url': FOLDER_URL_ID if not PRODUCTION else S_FOLDER_URL_ID,
+        'deletion_date': DELETION_DATE_ID if not PRODUCTION else S_DELETION_DATE_ID,
+        'em_notification_date': EM_NOTIFICATION_ID if not PRODUCTION else S_EM_NOTIFICATION_ID,
+        'deletion_status': DELETION_STATUS_ID if not PRODUCTION else S_DELETION_STATUS_ID,
     }
 
     # Application Settings
@@ -91,8 +121,8 @@ class Config:
         """
         missing = []
         
-        client_id_var = 'S_APP_CLIENT_ID' if cls.DEV_MODE else 'APP_CLIENT_ID'
-        client_secret_var = 'S_APP_SECRET' if cls.DEV_MODE else 'APP_SECRET'
+        client_id_var = 'S_APP_CLIENT_ID' if cls.PRODUCTION else 'APP_CLIENT_ID'
+        client_secret_var = 'S_APP_SECRET' if cls.PRODUCTION else 'APP_SECRET'
         
         if not cls.CLIENT_ID:
             missing.append(client_id_var)
@@ -104,37 +134,6 @@ class Config:
                 f"Missing required OAuth configuration: {', '.join(missing)}. "
                 "Please set these environment variables."
             )
-    
-    
-    @classmethod
-    def validate_sheet_config(cls) -> None:
-        """
-        Validate that required sheet configuration is present.
-        
-        Raises:
-            ConfigurationError: If required sheet settings are missing
-        """
-        missing = []
-        
-        if not cls.S_INTAKE_SHEET_ID:
-            missing.append('PROD_TEST_SHEET')
-        
-        if missing:
-            raise ConfigurationError(
-                f"Missing required sheet configuration: {', '.join(missing)}. "
-                "Please set these environment variables."
-            )
-    
-    @classmethod
-    def validate_all(cls) -> None:
-        """
-        Validate all required configuration.
-        
-        Raises:
-            ConfigurationError: If any required settings are missing
-        """
-        cls.validate_oauth_config()
-        cls.validate_sheet_config()
     
     @classmethod
     def get_summary(cls) -> dict:
@@ -153,7 +152,6 @@ class Config:
                 'scopes': cls.OAUTH_SCOPES,
             },
             'sheet': {
-                'prod_test_sheet': cls._mask_value(cls.PROD_TEST_SHEET),
                 'column_titles': cls.COLUMN_TITLES,
             },
             'application': {

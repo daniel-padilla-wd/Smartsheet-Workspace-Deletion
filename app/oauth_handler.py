@@ -22,15 +22,15 @@ import certifi
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from threading import Thread
-from config import config
+from config import configuration
 
 # AWS imports - optional for local development
 try:
     import boto3
     from botocore.exceptions import ClientError
-    AWS_AVAILABLE = True
 except ImportError:
-    AWS_AVAILABLE = False
+    boto3 = None
+    ClientError = Exception
     logging.debug("boto3 not available - AWS Secrets Manager support disabled")
 
 # AWS Secrets Manager secret names
@@ -39,8 +39,9 @@ REFRESH_TOKEN_SECRET = "ausw2p-smgr-smt-refresh-token-002"
 CLIENT_ID_SECRET = "ausw2p-smgr-smt-client-id-003"
 CLIENT_SECRET_SECRET = "ausw2p-smgr-smt-client-secret-004"
 
-# Detect if running in AWS Lambda environment
-IS_AWS_LAMBDA = os.getenv('AWS_LAMBDA_FUNCTION_NAME') is not None or os.getenv('AWS_EXECUTION_ENV') is not None
+def use_aws_secrets() -> bool:
+    """Use explicit deployment flag from configuration for storage routing."""
+    return bool(configuration.LINUX_SERVER)
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
@@ -53,7 +54,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Handle GET request from OAuth redirect."""
         parsed = urlparse(self.path)
-        if parsed.path == urlparse(config.REDIRECT_URI).path:
+        if parsed.path == urlparse(configuration.REDIRECT_URI).path:
             qs = parse_qs(parsed.query)
             
             # Validate state parameter for CSRF protection
@@ -107,9 +108,10 @@ def get_secret_string(secret_name):
     Returns:
         str or None: Secret value or None if retrieval fails
     """
-    if not AWS_AVAILABLE:
-        logging.error("boto3 not available - cannot access AWS Secrets Manager")
-        return None
+    if boto3 is None:
+        raise RuntimeError(
+            "AWS mode is enabled but boto3 is unavailable. Install boto3 in this environment."
+        )
     
     client = boto3.client('secretsmanager')
     try:
@@ -164,9 +166,10 @@ def save_tokens_to_aws(access_token, refresh_token):
     Returns:
         bool: True if successful, False otherwise
     """
-    if not AWS_AVAILABLE:
-        logging.error("boto3 not available - cannot save to AWS Secrets Manager")
-        return False
+    if boto3 is None:
+        raise RuntimeError(
+            "AWS mode is enabled but boto3 is unavailable. Install boto3 in this environment."
+        )
     
     client = boto3.client('secretsmanager')
     
@@ -175,7 +178,8 @@ def save_tokens_to_aws(access_token, refresh_token):
         client.put_secret_value(SecretId=ACCESS_TOKEN_SECRET, SecretString=access_token)
         logging.info(f"Saved access token to {ACCESS_TOKEN_SECRET}")
     except ClientError as e:
-        if e.response.get('Error', {}).get('Code') in ('ResourceNotFoundException',):
+        error_code = getattr(e, 'response', {}).get('Error', {}).get('Code')
+        if error_code in ('ResourceNotFoundException',):
             try:
                 client.create_secret(Name=ACCESS_TOKEN_SECRET, SecretString=access_token)
                 logging.info(f"Created new secret {ACCESS_TOKEN_SECRET}")
@@ -191,7 +195,8 @@ def save_tokens_to_aws(access_token, refresh_token):
         client.put_secret_value(SecretId=REFRESH_TOKEN_SECRET, SecretString=refresh_token)
         logging.info(f"Saved refresh token to {REFRESH_TOKEN_SECRET}")
     except ClientError as e:
-        if e.response.get('Error', {}).get('Code') in ('ResourceNotFoundException',):
+        error_code = getattr(e, 'response', {}).get('Error', {}).get('Code')
+        if error_code in ('ResourceNotFoundException',):
             try:
                 client.create_secret(Name=REFRESH_TOKEN_SECRET, SecretString=refresh_token)
                 logging.info(f"Created new secret {REFRESH_TOKEN_SECRET}")
@@ -235,20 +240,21 @@ def build_auth_url(scopes, state='state123'):
         str: Complete authorization URL
     """
     # Get client ID from appropriate source
-    if IS_AWS_LAMBDA and AWS_AVAILABLE:
+    if use_aws_secrets():
         client_id, _ = get_oauth_credentials_from_aws()
         if not client_id:
-            logging.error("Failed to get client_id from AWS Secrets Manager")
-            return None
+            raise RuntimeError(
+                f"AWS mode is enabled but required secret is missing: {CLIENT_ID_SECRET}"
+            )
     else:
-        client_id = config.CLIENT_ID
+        client_id = configuration.CLIENT_ID
     
     scope_str = "+".join(scopes) if isinstance(scopes, (list, tuple)) else scopes
     params = (
         f"response_type=code&client_id={client_id}"
-        f"&scope={scope_str}&redirect_uri={config.REDIRECT_URI}&state={state}"
+        f"&scope={scope_str}&redirect_uri={configuration.REDIRECT_URI}&state={state}"
     )
-    return f"{config.AUTH_BASE}?{params}"
+    return f"{configuration.AUTH_BASE}?{params}"
 
 
 def exchange_code_for_tokens(code):
@@ -262,22 +268,24 @@ def exchange_code_for_tokens(code):
         dict: Token response containing access_token and refresh_token
     """
     # Get OAuth credentials from appropriate source
-    if IS_AWS_LAMBDA and AWS_AVAILABLE:
+    if use_aws_secrets():
         client_id, client_secret = get_oauth_credentials_from_aws()
         if not client_id or not client_secret:
-            raise ValueError("Failed to get OAuth credentials from AWS Secrets Manager")
+            raise RuntimeError(
+                "AWS mode is enabled but OAuth credentials are missing in Secrets Manager."
+            )
     else:
-        client_id = config.CLIENT_ID
-        client_secret = config.CLIENT_SECRET
+        client_id = configuration.CLIENT_ID
+        client_secret = configuration.CLIENT_SECRET
     
     data = {
         'grant_type': 'authorization_code',
         'code': code,
         'client_id': client_id,
         'client_secret': client_secret,
-        'redirect_uri': config.REDIRECT_URI,
+        'redirect_uri': configuration.REDIRECT_URI,
     }
-    resp = requests.post(config.TOKEN_URL, data=data, verify=certifi.where(), timeout=15)
+    resp = requests.post(configuration.TOKEN_URL, data=data, verify=certifi.where(), timeout=15)
     resp.raise_for_status()
     return resp.json()
 
@@ -293,13 +301,15 @@ def refresh_tokens(refresh_token):
         dict: Token response containing new access_token and refresh_token
     """
     # Get OAuth credentials from appropriate source
-    if IS_AWS_LAMBDA and AWS_AVAILABLE:
+    if use_aws_secrets():
         client_id, client_secret = get_oauth_credentials_from_aws()
         if not client_id or not client_secret:
-            raise ValueError("Failed to get OAuth credentials from AWS Secrets Manager")
+            raise RuntimeError(
+                "AWS mode is enabled but OAuth credentials are missing in Secrets Manager."
+            )
     else:
-        client_id = config.CLIENT_ID
-        client_secret = config.CLIENT_SECRET
+        client_id = configuration.CLIENT_ID
+        client_secret = configuration.CLIENT_SECRET
     
     data = {
         'grant_type': 'refresh_token',
@@ -307,7 +317,7 @@ def refresh_tokens(refresh_token):
         'client_id': client_id,
         'client_secret': client_secret,
     }
-    resp = requests.post(config.TOKEN_URL, data=data, verify=certifi.where(), timeout=15)
+    resp = requests.post(configuration.TOKEN_URL, data=data, verify=certifi.where(), timeout=15)
     resp.raise_for_status()
     return resp.json()
 
@@ -316,7 +326,7 @@ def refresh_tokens(refresh_token):
 def save_tokens(access_token, refresh_token):
     """
     Save access and refresh tokens to appropriate storage.
-    Uses AWS Secrets Manager in Lambda, local file otherwise.
+    Uses AWS Secrets Manager when LINUX_SERVER is enabled, local file otherwise.
     
     Args:
         access_token: Current access token
@@ -325,14 +335,14 @@ def save_tokens(access_token, refresh_token):
     Returns:
         bool: True if successful, False otherwise
     """
-    if IS_AWS_LAMBDA and AWS_AVAILABLE:
-        # Note: This will fail if Lambda doesn't have write permissions
-        # User will need to manually update tokens locally and redeploy
-        logging.info("Running in AWS Lambda - attempting to save to Secrets Manager")
+    if use_aws_secrets():
+        logging.info("AWS mode enabled - saving tokens to Secrets Manager")
         success = save_tokens_to_aws(access_token, refresh_token)
         if not success:
-            logging.warning("Failed to save tokens to AWS Secrets Manager - check IAM permissions")
-        return success
+            raise RuntimeError(
+                "AWS mode is enabled but failed to save tokens to Secrets Manager."
+            )
+        return True
     else:
         # Local file storage
         token_data = {
@@ -340,9 +350,9 @@ def save_tokens(access_token, refresh_token):
             "refreshToken": refresh_token
         }
         try:
-            with open(config.TOKEN_FILE, 'w') as f:
+            with open(configuration.TOKEN_FILE, 'w') as f:
                 json.dump(token_data, f)
-            logging.info(f"Saved tokens to local file: {config.TOKEN_FILE}")
+            logging.info(f"Saved tokens to local file: {configuration.TOKEN_FILE}")
             return True
         except Exception as e:
             logging.error(f"Failed to save tokens to file: {e}")
@@ -352,25 +362,25 @@ def save_tokens(access_token, refresh_token):
 def load_tokens():
     """
     Load stored tokens from appropriate storage.
-    Uses AWS Secrets Manager in Lambda, local file otherwise.
+    Uses AWS Secrets Manager when LINUX_SERVER is enabled, local file otherwise.
     
     Returns:
         tuple: (access_token, refresh_token) or (None, None) if not found
     """
-    if IS_AWS_LAMBDA and AWS_AVAILABLE:
-        logging.info("Running in AWS Lambda - loading tokens from Secrets Manager")
+    if use_aws_secrets():
+        logging.info("AWS mode enabled - loading tokens from Secrets Manager")
         return load_tokens_from_aws()
     else:
         # Local file storage
-        if not os.path.exists(config.TOKEN_FILE):
+        if not os.path.exists(configuration.TOKEN_FILE):
             return None, None
         
         try:
-            with open(config.TOKEN_FILE, 'r') as f:
+            with open(configuration.TOKEN_FILE, 'r') as f:
                 token_data = json.load(f)
                 access = token_data.get('accessToken')
                 refresh = token_data.get('refreshToken')
-                logging.info(f"Loaded tokens from local file: {config.TOKEN_FILE}")
+                logging.info(f"Loaded tokens from local file: {configuration.TOKEN_FILE}")
                 return access, refresh
         except Exception as e:
             logging.warning(f"Failed to load tokens from file: {e}")
@@ -511,12 +521,12 @@ def run_oauth_flow(scopes):
         logging.warning("Failed to open browser automatically. Please open the URL manually.")
     
     # Bind to callback URI
-    parsed_redirect = urlparse(config.REDIRECT_URI)
+    parsed_redirect = urlparse(configuration.REDIRECT_URI)
     server_address = (parsed_redirect.hostname or 'localhost', parsed_redirect.port or 8080)
     
     try:
         httpd = HTTPServer(server_address, OAuthCallbackHandler)
-        logging.info(f"Listening for OAuth callback on {config.REDIRECT_URI}")
+        logging.info(f"Listening for OAuth callback on {configuration.REDIRECT_URI}")
         httpd.handle_request()
     except OSError as e:
         logging.warning(f"Could not start local server: {e}. Falling back to manual input.")

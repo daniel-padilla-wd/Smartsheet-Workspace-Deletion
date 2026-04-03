@@ -14,7 +14,7 @@ from typing import Any, Dict
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
 from smartsheet.models.row import Row as SmartsheetRow
 
-from config import config, ConfigurationError  
+from config import configuration, ConfigurationError  
 from oauth_handler import get_smartsheet_client  
 from repository import SmartsheetRepository  
 from service import WorkspaceDeletionService
@@ -175,13 +175,13 @@ def main() -> Dict[str, Any]:
     }
 
     try:
-        config.validate_oauth_config()
+        configuration.validate_oauth_config()
     except ConfigurationError as err:
         error_msg = f"Configuration error: {err}"
         logging.error(error_msg)
         return {"error": error_msg, "summary": summary_template, "log_file": log_file}
 
-    client = get_smartsheet_client(config.OAUTH_SCOPES)
+    client = get_smartsheet_client(configuration.OAUTH_SCOPES)
     if not client:
         error_msg = "Authentication failed"
         logging.error(error_msg)
@@ -190,7 +190,7 @@ def main() -> Dict[str, Any]:
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
-    intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
+    intake_sheet_id = configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID
 
     logging.info(
         "Starting workspace verification workflow (no deletion operations enabled)"
@@ -260,13 +260,13 @@ def tests():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     try:
-        config.validate_oauth_config()
+        configuration.validate_oauth_config()
     except ConfigurationError as err:
         error_msg = f"Configuration error: {err}"
         logging.error(error_msg)
         return {"error": error_msg}
 
-    client = get_smartsheet_client(config.OAUTH_SCOPES)
+    client = get_smartsheet_client(configuration.OAUTH_SCOPES)
     if not client:
         error_msg = "Authentication failed"
         logging.error(error_msg)
@@ -277,7 +277,7 @@ def tests():
 
     all_sheets = repository.list_all_sheets()
 
-    intake_sheet_id = config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID
+    intake_sheet_id = configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
     todays_date = get_pacific_today_date()
     if not todays_date:

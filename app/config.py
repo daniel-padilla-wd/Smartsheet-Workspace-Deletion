@@ -7,26 +7,10 @@ It provides a centralized place for all application settings.
 
 import os
 from dotenv import load_dotenv
-from typing import List, Optional
-from oauth_handler import get_oauth_credentials_from_aws
+from typing import List
 # Load environment variables from .env file
 load_dotenv()
 
-
-def get_app_client_and_secret() -> (str, str):
-    """
-    Retrieve the appropriate client ID and secret based on the environment.
-    
-    Returns:
-        tuple: (client_id, client_secret)
-    """
-    if Config.PRODUCTION and Config.LINUX_SERVER:
-        aws_client_id, aws_client_secret = get_oauth_credentials_from_aws()
-        return aws_client_id or os.getenv('APP_CLIENT_ID', ''), aws_client_secret or os.getenv('APP_SECRET', '')
-    elif Config.PRODUCTION:
-        return os.getenv('APP_CLIENT_ID', ''), os.getenv('APP_SECRET', '')
-    else:
-        return os.getenv('S_APP_CLIENT_ID', ''), os.getenv('S_APP_SECRET', '')
 
 class ConfigurationError(Exception):
     """Raised when required configuration is missing or invalid."""
@@ -47,21 +31,9 @@ class Config:
     # At this time (4/2), the windows server likely cannot read AWS Secrets. 
     LINUX_SERVER = False
 
-    
-    if PRODUCTION and LINUX_SERVER:
-        aws_client_id, aws_client_secret = get_oauth_credentials_from_aws()
-        APP_CLIENT_ID = aws_client_id or os.getenv('APP_CLIENT_ID', '')
-        APP_SECRET = aws_client_secret or os.getenv('APP_SECRET', '')
-    elif PRODUCTION:
-        APP_CLIENT_ID = os.getenv('APP_CLIENT_ID', '')
-        APP_SECRET = os.getenv('APP_SECRET', '')
-    else:
-        APP_CLIENT_ID = os.getenv('S_APP_CLIENT_ID', '')
-        APP_SECRET = os.getenv('S_APP_SECRET', '')
-
     # OAuth Configuration
-    CLIENT_ID: str = APP_CLIENT_ID
-    CLIENT_SECRET: str = APP_SECRET
+    CLIENT_ID: str = os.getenv('S_APP_CLIENT_ID', '') if not PRODUCTION else os.getenv('APP_CLIENT_ID', '')
+    CLIENT_SECRET: str = os.getenv('S_APP_SECRET', '') if not PRODUCTION else os.getenv('APP_SECRET', '')
     REDIRECT_URI: str = 'http://localhost:8080/callback'
     TOKEN_FILE: str = 'smartsheet_token.json'
     
@@ -180,4 +152,4 @@ class Config:
 
 
 # Singleton instance for easy import
-config = Config()
+configuration = Config()

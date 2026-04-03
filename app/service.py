@@ -8,7 +8,7 @@ the workflow without direct API calls.
 
 import logging
 from typing import Dict, List, Optional, Any
-from config import config
+from config import configuration
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
 from smartsheet.models.row import Row as SmartsheetRow
 from smartsheet.models.cell import Cell as SmartsheetCell
@@ -119,7 +119,7 @@ class WorkspaceDeletionService:
             Dict containing extracted row data
         """
         extracted_data = {}
-        target_columns = config.COLUMN_TITLES
+        target_columns = configuration.COLUMN_TITLES
         target_columns_ids = target_columns.values()
         
         for cell in row.cells:
@@ -322,9 +322,9 @@ class WorkspaceDeletionService:
         
         try:
             self.repository.update_cell(
-                sheet_id=config.S_INTAKE_SHEET_ID if config.DEV_MODE else config.INTAKE_SHEET_ID,
+                sheet_id=configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID,
                 row_id=entry.row_id,
-                column_id=config.COLUMN_TITLES["deletion_status"],
+                column_id=configuration.COLUMN_TITLES["deletion_status"],
                 new_value="Deleted",
                 safe_mode=safe_mode
             )

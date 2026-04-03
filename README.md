@@ -93,23 +93,38 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Configuration is managed in `app/config.py` using environment variables.
+Configuration is managed in `app/config.py` using the `configuration` singleton, which loads values from environment variables and defines mode flags.
 
-Required OAuth variables (depending on mode):
+### Mode Flags
 
-- `APP_CLIENT_ID`
-- `APP_SECRET`
-- `S_APP_CLIENT_ID`
-- `S_APP_SECRET`
+- `PRODUCTION` (bool, default: `False`)
+  - When `True`: uses production Smartsheet sheet/credential resources
+  - When `False`: uses sandbox Smartsheet sheet/credential resources
+- `LINUX_SERVER` (bool, default: `False`)
+  - When `True`: token storage/retrieval uses AWS Secrets Manager
+  - When `False`: token storage/retrieval uses local file
 
-Common optional variables:
+### Required Credentials (Production Mode)
 
-- `REDIRECT_URI`
-- `TOKEN_FILE`
-- `TIMEZONE`
-- `FILE_LOGGING_LEVEL`
-- `CONSOLE_LOGGING_LEVEL`
-- `INTAKE_SHEET_ID`
+When `PRODUCTION=True`:
+- `APP_CLIENT_ID` — Smartsheet OAuth client ID
+- `APP_SECRET` — Smartsheet OAuth client secret
+- `INTAKE_SHEET_ID` — Production intake sheet ID (env var)
+
+### Required Credentials (Sandbox Mode)
+
+When `PRODUCTION=False`:
+- `S_APP_CLIENT_ID` — Smartsheet sandbox OAuth client ID
+- `S_APP_SECRET` — Smartsheet sandbox OAuth client secret
+- Sandbox intake sheet ID is hardcoded in `config.py` as `S_INTAKE_SHEET_ID`
+
+### Optional Configuration
+
+- `REDIRECT_URI` (default: `http://localhost:8080/callback`)
+- `TOKEN_FILE` (default: `smartsheet_token.json`)
+- `TIMEZONE` (default: `America/Los_Angeles`)
+- `FILE_LOGGING_LEVEL` (default: `DEBUG`)
+- `CONSOLE_LOGGING_LEVEL` (default: `INFO`)
 
 ## Run
 

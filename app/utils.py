@@ -13,7 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from functools import wraps
 from typing import Optional, Dict, Any, Callable, Iterable, TypeVar
-from config import config
+from config import configuration
 from smartsheet.models.sheet import Sheet as SmartsheetSheet
 from smartsheet.models.row import Row as SmartsheetRow
 from smartsheet.models.cell import Cell as SmartsheetCell
@@ -70,18 +70,18 @@ def get_pacific_today_date() -> Optional[str]:
     """
     Returns today's date in the configured timezone, formatted as 'YYYY-MM-DD'.
     
-    Uses the timezone from config.TIMEZONE (defaults to 'America/Los_Angeles').
+    Uses the timezone from configuration.TIMEZONE (defaults to 'America/Los_Angeles').
     
     Returns:
         str: The formatted date string (e.g., '2025-12-19') or None if error occurs.
     """
     try:
-        tz = ZoneInfo(config.TIMEZONE)
+        tz = ZoneInfo(configuration.TIMEZONE)
         now = datetime.now(tz)
         formatted_date = now.strftime('%Y-%m-%d')
         return formatted_date
     except ZoneInfoNotFoundError:
-        logging.error(f"Timezone '{config.TIMEZONE}' not found.")
+        logging.error(f"Timezone '{configuration.TIMEZONE}' not found.")
         logging.warning("Please ensure your system's timezone data is up-to-date or install 'tzdata' package.")
         return None
     except Exception as e:
@@ -123,12 +123,12 @@ def validate_complete_cell_values(cells: list[SmartsheetCell]) -> bool:
         bool: True if all required values are present, False if any are missing.
     """
     for cell in cells:
-        if getattr(cell, "column_id", None) == config.COLUMN_TITLES["deletion_date"]:
+        if getattr(cell, "column_id", None) == configuration.COLUMN_TITLES["deletion_date"]:
             deletion_date = getattr(cell, "value", None)
             #logging.info(f"Validating deletion date cell: {deletion_date}")
             if not deletion_date:
                 return False
-        elif getattr(cell, "column_id", None) == config.COLUMN_TITLES["em_notification_date"]:
+        elif getattr(cell, "column_id", None) == configuration.COLUMN_TITLES["em_notification_date"]:
             em_notification_date = getattr(cell, "value", None)
             #logging.info(f"Validating EM notification date cell: {em_notification_date}")
             if not em_notification_date:
@@ -148,7 +148,7 @@ def get_hyperlink_from_cell(cells: list[SmartsheetCell]) -> Optional[str]:
     Returns:
         str or None: The hyperlink value if found, otherwise None.
     """
-    hyperlink_col_id = config.COLUMN_TITLES["folder_url"]
+    hyperlink_col_id = configuration.COLUMN_TITLES["folder_url"]
     for cell in cells:
         if getattr(cell, "column_id", None) == hyperlink_col_id:
             if getattr(cell, "hyperlink", None):
@@ -176,7 +176,7 @@ def filter_intake_data(intake_sheet_data: SmartsheetSheet, todays_date: Optional
         raise ValueError("At least one of `todays_date` or `has_folder_url` must be provided")
 
     filtered_rows: list[SmartsheetRow] = []
-    deletion_date_col_id = config.COLUMN_TITLES["deletion_date"]
+    deletion_date_col_id = configuration.COLUMN_TITLES["deletion_date"]
 
     for row in getattr(intake_sheet_data, "rows", []):
         if has_folder_url is not None:
@@ -372,7 +372,7 @@ def setup_file_logging(session_name: str, log_dir: str = "logs", file_level: Opt
         session_name: Name of the session/function (used in log filename)
         log_dir: Directory to store logs (default: "logs")
         file_level: Logging level for file handler ("DEBUG", "INFO", "WARNING", "ERROR").
-                   If None, uses config.FILE_LOGGING_LEVEL (default: "DEBUG")
+                   If None, uses configuration.FILE_LOGGING_LEVEL (default: "DEBUG")
 
     Returns:
         str: Path to the log file
@@ -388,7 +388,7 @@ def setup_file_logging(session_name: str, log_dir: str = "logs", file_level: Opt
 
     # Use provided level or read from config
     if file_level is None:
-        file_level = config.FILE_LOGGING_LEVEL
+        file_level = configuration.FILE_LOGGING_LEVEL
     
     # Validate logging level
     valid_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}

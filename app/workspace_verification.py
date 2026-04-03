@@ -190,7 +190,7 @@ def main() -> Dict[str, Any]:
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
-    intake_sheet_id = configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID
+    intake_sheet_id = configuration.INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.S_INTAKE_SHEET_ID
 
     logging.info(
         "Starting workspace verification workflow (no deletion operations enabled)"
@@ -277,7 +277,7 @@ def tests():
 
     all_sheets = repository.list_all_sheets()
 
-    intake_sheet_id = configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID
+    intake_sheet_id = configuration.INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.S_INTAKE_SHEET_ID
     intake_sheet = repository.get_sheet(int(intake_sheet_id))
     todays_date = get_pacific_today_date()
     if not todays_date:

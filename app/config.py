@@ -25,7 +25,7 @@ class Config:
     required by the application.
     """
     # Mode
-    PRODUCTION = False
+    PRODUCTION = True
 
     # Toggle this flag if you're running in the linux server. 
     # At this time (4/2), the windows server likely cannot read AWS Secrets. 
@@ -71,10 +71,10 @@ class Config:
 
     # Column Titles Mapping
     COLUMN_TITLES: dict = {
-        'folder_url': FOLDER_URL_ID if not PRODUCTION else S_FOLDER_URL_ID,
-        'deletion_date': DELETION_DATE_ID if not PRODUCTION else S_DELETION_DATE_ID,
-        'em_notification_date': EM_NOTIFICATION_ID if not PRODUCTION else S_EM_NOTIFICATION_ID,
-        'deletion_status': DELETION_STATUS_ID if not PRODUCTION else S_DELETION_STATUS_ID,
+        'folder_url': FOLDER_URL_ID if PRODUCTION else S_FOLDER_URL_ID,
+        'deletion_date': DELETION_DATE_ID if PRODUCTION else S_DELETION_DATE_ID,
+        'em_notification_date': EM_NOTIFICATION_ID if PRODUCTION else S_EM_NOTIFICATION_ID,
+        'deletion_status': DELETION_STATUS_ID if PRODUCTION else S_DELETION_STATUS_ID,
     }
 
     # Application Settings
@@ -93,8 +93,8 @@ class Config:
         """
         missing = []
         
-        client_id_var = 'S_APP_CLIENT_ID' if cls.PRODUCTION else 'APP_CLIENT_ID'
-        client_secret_var = 'S_APP_SECRET' if cls.PRODUCTION else 'APP_SECRET'
+        client_id_var = 'APP_CLIENT_ID' if cls.PRODUCTION else 'S_APP_CLIENT_ID'
+        client_secret_var = 'APP_SECRET' if cls.PRODUCTION else 'S_APP_SECRET'
         
         if not cls.CLIENT_ID:
             missing.append(client_id_var)

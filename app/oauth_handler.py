@@ -458,7 +458,8 @@ def validate_client(client):
         bool: True if client is valid or error is non-auth related, False only for auth errors
     """
     try:
-        client.Users.get_current_user()
+        user = client.Users.get_current_user()
+        logging.info(f"Token validation successful for user: {user})")
         return True
     except smartsheet_exceptions.ApiError as err:
         if is_auth_error(err):

@@ -43,7 +43,7 @@ def main():
     repository = SmartsheetRepository(client)
     service = WorkspaceDeletionService(repository)
 
-    intake_sheet_id = configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID
+    intake_sheet_id = configuration.INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.S_INTAKE_SHEET_ID
 
     logging.info("Starting workspace verification workflow (no deletion operations enabled)")
     intake_sheet = repository.get_sheet(int(intake_sheet_id))

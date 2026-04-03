@@ -322,7 +322,7 @@ class WorkspaceDeletionService:
         
         try:
             self.repository.update_cell(
-                sheet_id=configuration.S_INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.INTAKE_SHEET_ID,
+                sheet_id=configuration.INTAKE_SHEET_ID if configuration.PRODUCTION else configuration.S_INTAKE_SHEET_ID,
                 row_id=entry.row_id,
                 column_id=configuration.COLUMN_TITLES["deletion_status"],
                 new_value="Deleted",

@@ -91,6 +91,104 @@ flowchart LR
 pip install -r requirements.txt
 ```
 
+## GitHub Copilot Agents
+
+This repository includes custom Copilot agent definitions under `.github/agents/`.
+These agents are used to route documentation, debugging, Smartsheet API, and design-review requests to the most appropriate specialist.
+
+### Agent System Overview
+
+- `Orchestrator` is the coordinator agent.
+- It classifies a request and delegates to exactly one specialist unless the task clearly needs a different path.
+- The specialist returns findings or guidance, and the orchestrator assembles the final response.
+
+### Available Agents
+
+#### `Orchestrator`
+
+- File: `.github/agents/orchestrator.agent.md`
+- Purpose: Route requests to the correct specialist and assemble the final answer.
+- Delegates to: `debug-agent`, `docs-agent`, `smartsheet-docs-lookup-agent`, and `software-design-agent`
+- Built-in handoffs:
+  - `Plan`: create phased implementation plans
+  - `Ask`: answer directly when delegation is unnecessary
+
+#### `debug-agent`
+
+- File: `.github/agents/debug-agent.agent.md`
+- Purpose: Diagnose failures, isolate likely root causes, and propose the smallest safe fix.
+- Best for:
+  - failing tests
+  - runtime errors
+  - stack traces
+  - flaky behavior
+
+#### `docs-agent`
+
+- File: `.github/agents/docs-agent.agent.md`
+- Purpose: Turn implementation details into clear documentation.
+- Best for:
+  - README updates
+  - developer guides
+  - onboarding documentation
+  - API usage notes
+  - Python docstrings
+
+#### `smartsheet-docs-lookup-agent`
+
+- File: `.github/agents/smartsheet-docs-lookup-agent.agent.md`
+- Purpose: Answer Smartsheet API and Smartsheet Python SDK questions using official docs and local package sources.
+- Best for:
+  - Smartsheet API methods and scopes
+  - SDK usage patterns
+  - endpoint behavior and caveats
+  - permission and scope requirements
+
+#### `software-design-agent`
+
+- File: `.github/agents/software-design-agent.agent.md`
+- Purpose: Review code and architecture against maintainability and Python design principles.
+- Best for:
+  - refactor reviews
+  - SOLID, DRY, KISS, and YAGNI tradeoffs
+  - abstraction and coupling concerns
+  - Pythonic alternatives to class-heavy designs
+
+### Routing Rules
+
+The orchestrator currently routes requests using these rules:
+
+- Debugging issues, stack traces, failing tests, and reproducible bugs go to `debug-agent`.
+- Technical writing, README work, onboarding docs, API usage notes, and docstrings go to `docs-agent`.
+- Smartsheet API and SDK questions go to `smartsheet-docs-lookup-agent`.
+- Design review and maintainability questions go to `software-design-agent`.
+- Planning requests go to built-in Plan mode.
+- Everything else is handled directly.
+
+### How To Use Them
+
+In practice, describe the task in Copilot Chat and let the orchestrator route it.
+
+Examples:
+
+- "The app crashes when resolving workspace IDs. Here is the traceback." -> routes to `debug-agent`
+- "Update the README to explain the verification-first workflow." -> routes to `docs-agent`
+- "What Smartsheet scope is required to delete a workspace?" -> routes to `smartsheet-docs-lookup-agent`
+- "Is the current service layer over-abstracted?" -> routes to `software-design-agent`
+- "Create a phased implementation plan for adding Slack notifications." -> routes to Plan mode
+
+### Agent File Structure
+
+Each `.agent.md` file combines YAML frontmatter with markdown instructions.
+Common fields used in this repository include:
+
+- `name`: displayed agent name
+- `description`: short role summary
+- `tools`: tool access granted to the agent
+- `user-invocable`: whether the agent can be directly selected by a user
+- `agents`: sub-agents available for delegation
+- `handoffs`: predefined fallback or alternate execution paths
+
 ## Configuration
 
 Configuration is managed in `app/config.py` using the `configuration` singleton, which loads values from environment variables and defines mode flags.
